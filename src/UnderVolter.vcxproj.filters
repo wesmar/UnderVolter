@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="Config.c" />
+    <ClCompile Include="SecureBootEnroll.c" />
+    <ClCompile Include="NvramSetup.c" />
+    <ClCompile Include="ConsoleUi.c" />
+    <ClCompile Include="UiConsole.c" />
+    <ClCompile Include="SafetyPrompts.c" />
+    <ClCompile Include="CpuData.c" />
+    <ClCompile Include="CpuDataVR.c" />
+    <ClCompile Include="CpuInfo.c" />
+    <ClCompile Include="CpuMailboxes.c" />
+    <ClCompile Include="DelayX86.c" />
+    <ClCompile Include="FixedPoint.c" />
+    <ClCompile Include="MiniLog.c" />
+    <ClCompile Include="PrintStats.c" />
+    <ClCompile Include="SelfTest.c" />
+    <ClCompile Include="TimeWindows.c" />
+    <ClCompile Include="VfCurve.c" />
+    <ClCompile Include="InterruptHook.c" />
+    <ClCompile Include="HwAccess.c" />
+    <ClCompile Include="MpDispatcher.c" />
+    <ClCompile Include="OcMailbox.c" />
+    <ClCompile Include="Platform.c" />
+    <ClCompile Include="PowerLimits.c" />
+    <ClCompile Include="UnderVolter.c" />
+    <ClCompile Include="TurboRatioLimits.c" />
+    <ClCompile Include="VoltTables.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="ASMx64">
+      <UniqueIdentifier>{dacef863-ab0b-4b3d-b09d-c69f3dcdb71e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Include">
+      <UniqueIdentifier>{0f5cdc5b-3b40-44c4-82a2-dae3827afe5d}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="BmpFont.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="Config.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="NvramSetup.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="ConsoleUi.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="UiConsole.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="SafetyPrompts.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="Constants.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="CpuData.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="CpuInfo.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="CpuMailboxes.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="ASMx64\CpuStressorAvx2.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="DelayX86.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="FixedPoint.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="PrintStats.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="SelfTest.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="MiniLog.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="HwIntrinsicsX64.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="InterruptHook.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="HwAccess.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="TimeWindows.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="VfCurve.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="MpDispatcher.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="OcMailbox.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="Platform.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="PowerLimits.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="TurboRatioLimits.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="VoltTables.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="SecureBootEnroll.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+    <ClInclude Include="UnderVolterCert.h">
+      <Filter>Include</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="ASMx64\CpuStressorAvx2.asm">
+      <Filter>ASMx64</Filter>
+    </MASM>
+    <MASM Include="ASMx64\HwIntrinsicsX64.asm">
+      <Filter>ASMx64</Filter>
+    </MASM>
+  </ItemGroup>
+</Project>

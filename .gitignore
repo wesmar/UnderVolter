@@ -1,0 +1,9 @@
+# Build output
+bin/
+
+# Generated release archives
+data/*.7z
+
+# Internal release/build scripts — not for public repo
+*.sh
+release-now.md

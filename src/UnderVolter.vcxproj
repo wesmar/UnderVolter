@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{A94AC9AF-BA6D-4F79-AD8A-806D78CD4A0E}</ProjectGuid>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <PlatformToolset>v145</PlatformToolset>
+    <EnableASAN>false</EnableASAN>
+    <EnableFuzzer>false</EnableFuzzer>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+    <PropertyGroup Label="UserMacros">
+    <EDK_PATH>C:\Projekty\VisualUEFI\edk2</EDK_PATH>
+  </PropertyGroup>
+  <PropertyGroup>    
+    <IncludePath>$(EDK_PATH)\MdePkg\Include;$(EDK_PATH)\MdePkg\Include\X64;$(EDK_PATH)\ShellPkg\Include;$(EDK_PATH)\CryptoPkg\Include;$(EDK_PATH)\UefiCpuPkg\Include</IncludePath>
+    <LibraryPath>$(SolutionDir)lib</LibraryPath>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <ItemGroup>
+    <BuildMacro Include="EDK_PATH">
+      <Value>$(EDK_PATH)</Value>
+      <EnvironmentVariable>true</EnvironmentVariable>
+    </BuildMacro>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.props" />
+    <PropertyGroup>
+    <GenerateManifest />
+    <IntDir>$(SolutionDir)$(Platform)\$(Configuration)\obj\$(TargetName)\</IntDir>
+    <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\</OutDir>
+    <TargetExt>.efi</TargetExt>
+  </PropertyGroup>
+  <PropertyGroup>
+    <LocalDebuggerCommand>..\debugger\qemu.exe</LocalDebuggerCommand>
+    <LocalDebuggerCommandArguments>-name "VisualUEFI Debugger" -drive file=OVMF_CODE-need-smm.fd,if=pflash,format=raw,unit=0,readonly=on -drive file=OVMF_VARS-need-smm.fd,if=pflash,format=raw,unit=1 -drive file=fat:rw:..\workspace\$(Platform)\$(Configuration)\,media=disk,if=virtio,format=raw -drive file=UefiShell.iso,format=raw -m 512 -machine q35,smm=on -nodefaults -vga std -global driver=cfi.pflash01,property=secure,value=on -global ICH9-LPC.disable_s3=1</LocalDebuggerCommandArguments>
+    <LocalDebuggerWorkingDirectory>..\..\debugger</LocalDebuggerWorkingDirectory>
+    <LocalDebuggerDebuggerType>Script</LocalDebuggerDebuggerType>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WholeProgramOptimization>true</WholeProgramOptimization>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <Optimization>MinSpace</Optimization>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <OmitFramePointers>true</OmitFramePointers>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <ExceptionHandling>SyncCThrow</ExceptionHandling>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <ControlFlowGuard>false</ControlFlowGuard>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <ForcedIncludeFiles>C:\Projekty\VisualUEFI\EDK-II\BaseLib\vshacks.h</ForcedIncludeFiles>
+      <CallingConvention />
+      <TreatWChar_tAsBuiltInType />
+      <StringPooling>true</StringPooling>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <ForceConformanceInForLoopScope />
+      <AdditionalOptions>/Gs32768 %(AdditionalOptions)</AdditionalOptions>
+      <ErrorReporting />
+      <FloatingPointModel />
+    </ClCompile>
+    <Link>
+      <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
+      <AdditionalDependencies>UefiHiiLib.lib;UefiHiiServicesLib.lib;UefiSortLib.lib;UefiShellLib.lib;GlueLib.lib;BaseLib.lib;BaseDebugPrintErrorLevelLib.lib;BasePrintLib.lib;UefiLib.lib;UefiBootServicesTableLib.lib;UefiRuntimeServicesTableLib.lib;UefiDevicePathLibDevicePathProtocol.lib;UefiDebugLibConOut.lib;UefiMemoryLib.lib;UefiMemoryAllocationLib.lib;BaseSynchronizationLib.lib;UefiFileHandleLib.lib</AdditionalDependencies>
+      <GenerateDebugInformation>DebugFastLink</GenerateDebugInformation>
+      <SubSystem>EFI Boot Service Driver</SubSystem>
+      <Driver>Driver</Driver>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableCOMDATFolding />
+      <LinkTimeCodeGeneration>UseFastLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <BaseAddress>0</BaseAddress>
+      <SectionAlignment>32</SectionAlignment>
+      <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
+      <RandomizedBaseAddress />
+      <DataExecutionPrevention />
+      <ManifestFile />
+      <AllowIsolation />
+      <EnableUAC />
+      <UACExecutionLevel />
+      <UACUIAccess />
+      <TypeLibraryResourceID />
+      <AdditionalOptions>/OPT:ICF=10 /IGNORE:4001 /IGNORE:4254 /IGNORE:4281 %(AdditionalOptions)</AdditionalOptions>
+      <MergeSections>.rdata=.data</MergeSections>
+      <SpecifySectionAttributes>.xdata,D</SpecifySectionAttributes>
+      <LinkErrorReporting />
+      <ProfileGuidedDatabase />
+      <EntryPointSymbol>EfiMain</EntryPointSymbol>
+    </Link>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <EnableClangTidyCodeAnalysis>true</EnableClangTidyCodeAnalysis>
+    <IgnoreImportLibrary>true</IgnoreImportLibrary>
+    <RunCodeAnalysis>true</RunCodeAnalysis>
+    <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
+    <EmbedManifest>false</EmbedManifest>
+    <PreBuildEventUseInBuild>false</PreBuildEventUseInBuild>
+    <PublicIncludeDirectories>
+    </PublicIncludeDirectories>
+    <PublicModuleDirectories>
+    </PublicModuleDirectories>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <Link>
+      <AdditionalDependencies>UefiApplicationEntryPoint.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <SubSystem>EFI Application</SubSystem>
+      <AdditionalLibraryDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AssemblyDebug Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</AssemblyDebug>
+      <GenerateDebugInformation Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</GenerateDebugInformation>
+      <TurnOffAssemblyGeneration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</TurnOffAssemblyGeneration>
+    </Link>
+    <ClCompile>
+      <ShowIncludes Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ShowIncludes>
+      <AssemblerOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">AssemblyAndSourceCode</AssemblerOutput>
+      <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">_VISUALUEFI;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <LanguageStandard_C Condition="'$(Configuration)|$(Platform)'=='Release|x64'">stdc17</LanguageStandard_C>
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Release|x64'">MinSpace</Optimization>
+      <FavorSizeOrSpeed Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Size</FavorSizeOrSpeed>
+      <EnablePREfast Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</EnablePREfast>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Level4</WarningLevel>
+      <BrowseInformation Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</BrowseInformation>
+      <MultiProcessorCompilation Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</MultiProcessorCompilation>
+      <UseStandardPreprocessor Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</UseStandardPreprocessor>
+      <EnableEnhancedInstructionSet Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotSet</EnableEnhancedInstructionSet>
+      <LanguageStandard Condition="'$(Configuration)|$(Platform)'=='Release|x64'">stdcpplatest</LanguageStandard>
+      <ConformanceMode Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ConformanceMode>
+      <UseFullPaths Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</UseFullPaths>
+      <OmitDefaultLibName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</OmitDefaultLibName>
+      <DebugInformationFormat Condition="'$(Configuration)|$(Platform)'=='Release|x64'">None</DebugInformationFormat>
+    </ClCompile>
+    <Bscmake>
+      <PreserveSbr Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</PreserveSbr>
+    </Bscmake>
+    <ProjectReference>
+      <LinkLibraryDependencies Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</LinkLibraryDependencies>
+    </ProjectReference>
+    <Manifest>
+      <SuppressDependencyElement Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</SuppressDependencyElement>
+      <VerboseOutput Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</VerboseOutput>
+      <AssemblyIdentity Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NIE</AssemblyIdentity>
+    </Manifest>
+    <MASM>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    </MASM>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="Config.c" />
+    <ClCompile Include="NvramSetup.c" />
+    <ClCompile Include="SecureBootEnroll.c" />
+    <ClCompile Include="ConsoleUi.c" />
+    <ClCompile Include="UiConsole.c" />
+    <ClCompile Include="SafetyPrompts.c" />
+    <ClCompile Include="CpuData.c" />
+    <ClCompile Include="CpuDataVR.c" />
+    <ClCompile Include="CpuInfo.c" />
+    <ClCompile Include="CpuMailboxes.c" />
+    <ClCompile Include="DelayX86.c" />
+    <ClCompile Include="FixedPoint.c" />
+    <ClCompile Include="MiniLog.c" />
+    <ClCompile Include="PrintStats.c" />
+    <ClCompile Include="SelfTest.c" />
+    <ClCompile Include="TimeWindows.c" />
+    <ClCompile Include="VfCurve.c" />
+    <ClCompile Include="InterruptHook.c" />
+    <ClCompile Include="HwAccess.c" />
+    <ClCompile Include="MpDispatcher.c" />
+    <ClCompile Include="OcMailbox.c" />
+    <ClCompile Include="Platform.c" />
+    <ClCompile Include="PowerLimits.c" />
+    <ClCompile Include="UnderVolter.c" />
+    <ClCompile Include="TurboRatioLimits.c" />
+    <ClCompile Include="VoltTables.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="BmpFont.h" />
+    <ClInclude Include="Config.h" />
+    <ClInclude Include="NvramSetup.h" />
+    <ClInclude Include="SecureBootEnroll.h" />
+    <ClInclude Include="ConsoleUi.h" />
+    <ClInclude Include="UiConsole.h" />
+    <ClInclude Include="SafetyPrompts.h" />
+    <ClInclude Include="Constants.h" />
+    <ClInclude Include="CpuData.h" />
+    <ClInclude Include="CpuInfo.h" />
+    <ClInclude Include="CpuMailboxes.h" />
+    <ClInclude Include="ASMx64\CpuStressorAvx2.h" />
+    <ClInclude Include="DelayX86.h" />
+    <ClInclude Include="FixedPoint.h" />
+    <ClInclude Include="PrintStats.h" />
+    <ClInclude Include="SelfTest.h" />
+    <ClInclude Include="MiniLog.h" />
+    <ClInclude Include="HwIntrinsicsX64.h" />
+    <ClInclude Include="InterruptHook.h" />
+    <ClInclude Include="HwAccess.h" />
+    <ClInclude Include="TimeWindows.h" />
+    <ClInclude Include="VfCurve.h" />
+    <ClInclude Include="MpDispatcher.h" />
+    <ClInclude Include="OcMailbox.h" />
+    <ClInclude Include="Platform.h" />
+    <ClInclude Include="PowerLimits.h" />
+    <ClInclude Include="TurboRatioLimits.h" />
+    <ClInclude Include="VoltTables.h" />
+    <ClInclude Include="UnderVolterCert.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="ASMx64\CpuStressorAvx2.asm" />
+    <MASM Include="ASMx64\HwIntrinsicsX64.asm" />
+  </ItemGroup>
+</Project>

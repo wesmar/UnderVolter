@@ -1,0 +1,1154 @@
+v0.01
+
+ADD: Decompose BIOS
+
+v0.02
+
+ADD: Initial attempt at module insertion
+
+FIX: Various decompile bugs for BIOSes >1MB
+
+v0.03
+
+ADD: Alters RSDT/XSDT tables etc.
+
+FIX: Various bugs
+
+v0.04
+
+ADD: SSV2 method
+
+FIX: Platform information not copied
+
+v0.05
+
+ADD: SSV2 handle split modules
+ADD: Improved resizing
+
+FIX: Size calculation in ACPI module shrinking
+
+v0.06
+
+ADD: Option not to alter ACPI tables
+ADD: ROM.LOG parsed for errors/warnings
+
+FIX: Log output in shrinking code
+FIX: Only alter RSDT/XSDT not honoured
+
+v0.07
+
+ADD: Parse new style Phoenix BIOSes
+
+FIX: Insert module failed if not at beginning or end
+
+v0.08
+
+ADD: Preliminary scanning for evidence of SLIC or elements of SLIC table
+ADD: Insertion of SLIC table as ACPI module in new style BIOSes
+
+FIX: Parsing improvements
+
+v0.09
+
+ADD: Partial support of dynamic mod
+ADD: Ability to replace existing SLIC strings
+
+FIX: Extraction bug
+FIX: Not find some SLIC elements
+FIX: SSV2 failed to insert if module chain ended with a split module
+
+v0.10
+
+ADD: Further dynamic support
+ADD: Ability to find and replace OEM/Table ID in other modules
+
+FIX: Module parsing bug
+
+v0.11
+
+ADD: Basic sSV2 Lenovo support
+
+BUG: Does not replace other OEM/Table IDs for Lenovo mods
+BUG: Will always allow dynamic mod even if no complete SLIC
+BUG: Allows dynamic mod for old style BIOSes
+
+FIX: Able to reintegrate ROM Holes and Bootblock (old style)
+
+v0.12
+
+ADD: Complete SSV2 support
+
+BUG: Will always allow dynamic mod even if no complete SLIC
+BUG: Allows dynamic mod for old style BIOSes
+
+FIX: Few parsing bugs
+
+v0.13
+
+ADD: Dynamic Lenovo
+
+FIX: Various
+
+v0.14
+
+FIX: Various fixes
+
+v0.15
+
+ADD: Improved certificate verification
+
+FIX: Checksum calculation error when reinserting an uncompressed lenovo module
+FIX: Crash when many copies of SLIC elements
+FIX: Altered default options for improved compatibility
+FIX: Removed some defunct options
+
+v0.16
+
+ADD: Option to only replace OEM/Table IDs prefixed by C3h
+ADD: Two additional OEM/Table ID fields (can be 8 or 14 bytes, * is translated to 00h)
+ADD: Option for dynamic method
+ADD: Ability to replace 4+2+4+4 split OEM/Table IDs
+
+FIX: If unable to shrink a replaced SLIC element for SSV2, then automatically try not replacing
+FIX: Failed to parse 1536K BIOS image
+
+v0.17
+
+ADD: Can now perform SSV2 method on Lenovo BIOS with no gaps
+
+FIX: Changed modules in DUMP should now reflect those extracted from the SLIC'd BIOS
+FIX: SLIC string is NOT changed if it is part of an already identified OEM/Table ID
+FIX: Additional OEM/Table ID length not properly verified
+FIX: Unable to insert module when there was available space
+FIX: Disable SLP box
+
+v0.18
+
+FIX: Not handle uncompressed ACPI containing BIOSCOD module
+FIX: Several bugs in module parsing and SCR creation
+FIX: Failed to identify ESCD
+FIX: Scan ACPI modules for OEM/Table IDs
+FIX: Module sizing routine bailed to early in some cases
+
+v0.19
+
+FIX: Various option changes for consistency within tool and with other tools
+FIX: Various module parsing errors
+
+v0.20
+
+FIX: Various option changes for consistency
+
+v0.21
+
+FIX: Various option changes for consistency
+FIX: Various module parsing errors
+FIX: BIOSCOD1_SLIC not found if no acpi tables modified
+FIX: split OEM/Table ID not found properly
+FIX: Some OEM/Table IDs were not scanned
+FIX: Any additional user specified OEM/Table IDs are replaced irrespective of preceeding C3h
+
+v0.22
+
+ADD: All changes are now prefixed with '**' in log
+ADD: Aggressive sizing automatically finds and blanks 'Sony Corporation' strings if needed
+
+FIX: Improved log information
+FIX: Allow more space between the 4+2 and 4+4 elements of a split ID
+FIX: Error looking for OEM/Table IDs caused fail
+FIX: For old style mods the files in DUMP were not correctly updated
+
+v0.23
+
+FIX: Sometimes an additional table ID was being replaced with an OEM ID
+FIX: Infinite loop for some dynamic mods
+
+v0.24
+
+ADD: Ability to deal with LZARI compress modules
+ADD: options to allow user to choose each modification and to manually alter a module
+
+FIX: Remember last directory for file open dialogs
+FIX: Failed to parse BCP blocks with invalid sizes
+FIX: Bug in BIOS size code
+
+v0.25
+
+FIX: Few module parsing bugs
+FIX: Inserted SLIC ACPI module might have wrong number
+FIX: Change dynamic default options
+
+0.26
+
+ADD: Option to always allow user modification of modules
+
+FIX: Unable to change SLIC replacement string
+FIX: Various module parsing changes (for more consistancy with PBE)
+
+v0.27
+
+ADD: option not to replace SLIC creator ID (for resizing)
+
+FIX: SLIC header always has checksum of 0
+
+v0.28
+
+ADD: Ability to parse RW Everything report for OEM/Table IDs
+ADD: Option to insert SLIC elements into appropriately sized empty modules
+
+FIX: Not properly finding and replacing some split OEM and Table IDs
+
+v0.29
+
+ADD: Ability to parse RW Everything report for SLIC
+ADD: Option to only replace SLIC elements found in RW Everything report
+
+FIX: Parsing of RW Everything report for OEM/Table IDs
+FIX: Handling of OTHER holes
+FIX: Failed to file some split OEM/Table IDs
+
+v0.30
+
+FIX: 'SLIC' strings are now replaced in MOD_xxyy modules, even when only alter modules in main module is ticked
+FIX: Changed options handling of SLIC header
+FIX: Executable now PhoenixTool.exe for consistancy with other tools
+FIX: Modules that are identical after modification are not altered
+FIX: Improved empty module handling
+
+v0.31
+
+ADD: Handle old style BIOSes in an EXE file
+
+FIX: Default string to replace 'SLIC' is now 'SLAC' to aid compressibility
+FIX: When dynamic is selected then non-applicable options are greyed out
+
+v0.32
+
+ADD: Parses RW report to decide on SSV2 or Dynamic method (and state of replace SLIC elements flag)
+
+FIX: Now looks for RW report in BIOS path by default
+FIX: Verify after mod would not verify original files
+
+v0.33
+
+ADD: Now shows '(from report)' where an OEM/Table ID that is in the RW report is changed
+
+FIX: RW report unloaded after loading new BIOS
+FIX: Infinite loop due to blank OEM/Table ID from RW report
+
+v0.34
+
+ADD: Option to only alter OEM/Table ID found in RSDT or XSDT tables in RW report
+
+FIX: Attempt to decompress some modules in error
+
+v0.35
+
+FIX: New RSDT/XSDT RW option not implemented properly
+FIX: '(from report)' sometimes shown in error (display only bug)
+
+v0.36
+
+FIX: Will look for table ID from RSDT and XSDT tables in RW report in its own right
+FIX: Bug in table ID handling
+
+v0.37
+
+FIX: Bug handling .EXE files
+
+v0.38
+
+FIX: Various fixes
+
+v0.39
+
+FIX: Preceeding C3h now applies to RSDT/XSDT Table ID from RW report
+
+v0.40
+
+FIX: Error parsing BIOS with flash header
+
+v0.41
+
+ADD: Option to only add SLIC module for SSV2
+
+v0.42
+
+ADD: Only add SLIC module automatically selected when modding a BIOS with no RSDT table
+
+FIX: EXE parsing code failed on a BIOS
+FIX: Option to blank OEM/Table IDs not being properly honoured
+FIX: Correct DSDT checksum
+
+v0.43
+
+ADD: Beta support for Dell Phoenix mods
+
+FIX: Error when module at end of image
+
+v0.44
+
+FIX: Multiple Dell Phoenix parsing bugs
+
+v0.45
+
+FIX: Dell Optiplex parsing
+FIX: Failed to extract HDR from files with a space in the filename
+FIX: New method of searching for and correcting checksums
+FIX: Other various fixes
+
+v0.46
+
+FIX: Parsing bug in new style BIOSes
+
+v0.47
+
+FIX: Properly handle Dell Optiplex with 2 GZIP headers (only creates HDR; no EXE)
+FIX: Parsing bug if filesize not multiple of 4
+FIX: Failure to extract header errors (hopefully!) - was not running automatically as administrator
+
+v1.00RC1
+
+ADD: Option to not alter tables and IDs when new and old SLIC IDs match
+ADD: For Dell mods, compresses the final HDR file as BIOS.GZ
+
+FIX: Old style mod using PBE would fail
+FIX: Checks for presence of GZIP.EXE
+
+v1.00RC2
+
+FIX: stop command left in, resulted in crash
+
+v1.00RC3
+
+ADD: Informs if Dell already contains a 2.1 SLIC
+ADD: EXPERIMENTAL Insyde support
+
+FIX: Some bugs
+
+v1.00RC4
+
+ADD: Decompress FL1 images
+
+FIX: Insyde method
+FIX: Recognition bugs
+
+v1.00RC5
+
+ADD: Find multiple pubkeys/markers in Insyde
+ADD: RW Report parsing for Insyde
+
+v1.00RC6
+
+ADD: Ability to parse Insyde BIOS modules
+
+FIX: Safer Insyde module alteration code
+FIX: Insyde BIOS identification
+
+v1.00RC7
+
+ADD: Ability to scan Lenovo BIOSCOD modules for extra LENOVO IDs
+ADD: More ID scanning/replacing features for Insyde BIOSes
+
+FIX: Phoenix module parsing bug
+
+v1.00RC8
+
+ADD: Handles non-compressed Insyde BIOSes (and as a side effect displays module info for EFI BIOSes)
+
+FIX: Improved Lenovo OEM/Table ID processing
+
+v1.00RC9
+
+FIX: Logic bugs in Insyde SLIC replacement decision
+
+v1.00RC10
+
+ADD: Sony OEM/Table ID lock patch
+
+v1.00RC11
+
+ADD: Ability to manually alter any module
+
+FIX: Sony lock bugs
+
+v1.00RC12
+
+ADD: Ability to select or specify address for SSV2 SLIC module insertion
+
+FIX: Unable to say no to blanking additional strings
+FIX: Non ACPI modules sometimes had strings blanked unnecessarily
+FIX: Only scan for Sony lock if option selected (otherwise reports false positives)
+
+v1.00 Final
+
+FIX: Check range of SONY patch
+
+v1.01RC1
+
+ADD: Parse EFI BIOSes (!!)
+
+FIX: Parsing ACER BIOS
+
+v1.01RC2
+
+ADD: EFI (Dyamic) Mod - replaces existing SLIC elements and OEM/Table ID strings
+
+FIX: Some bugs in EFI Parsing
+
+Note: Insyde now uses EFI code
+
+v1.01RC3
+
+FIX: Verify tails
+FIX: Handle gaps
+FIX: Change modules in FV that have a gap and not padding
+FIX: Correct tails
+FIX: Correct nested FV checksums
+FIX: Handle 2 different methods of padding modules
+
+v1.01RC4
+
+FIX: Option control of SSv2/Dynamic like Phoenix
+FIX: Hang on scanning for FVHs
+FIX: Improve correction of nested FV checksums
+
+v1.01RC5
+
+ADD: EFI SLIC insertion (Middleton's method)
+
+FIX: Bug in EFI module copy code for modules with a tail
+FIX: Tool fails on DBCS systems
+FIX: Failure to resize a module did not give an error
+
+v1.01RC6
+
+FIX: Not patch JMP in EFI SLIC code
+FIX: Not set SLIC checksum to 0 in EFI SLIC code
+FIX: Tidied up options (especially for EFI)
+
+v1.01RC7
+
+ADD: Graphical display of EFI BIOSes
+
+FIX: False recognition of old Insyde BIOSes (not moddable)
+
+v1.01RC8
+
+FIX: Error 9 when inserting modules
+FIX: Another adjustment to module copy code for modules with a tail
+
+v1.01RC9
+
+FIX: More language fixes
+FIX: Better handling of tails
+
+v1.01RC10
+
+FIX: More language fixes
+FIX: Handle Insyde FD BIOS like EFI BIOSes
+FIX: Fix some theoretical bugs in EFI module copying code
+FIX: Better handling of FV with padding at end (for Insyde FD)
+
+v1.01RC11
+
+FIX: Failed to decompress LOGO00 module in a phoenix BIOS
+FIX: Didn't update Verify button code for new Insyde handling
+
+v1.10
+
+FIX: Altered a couple of EFI warning messages
+
+BUG: On some systems when run from User directory or subdirectory  (ie. Desktop) Dell BIOS extraction fails - unable to extract HDR
+
+NOTE: Skipped to 1.10 as significant changes include EFI BIOS modification
+
+v1.11b1
+
+FIX: Failed to properly deal with HP Insyde BIOS
+
+v1.11b2
+
+FIX: Handle HP/Compaq $SIG checksums
+
+v1.11b3
+
+FIX: Improve handling of Insyde/HP BIOSes with integrated compressed full ROM images
+FIX: Incorrect sizing of EFI module in some rare circumstances
+FIX: Include all SLICs (inc Dell parts) in SLIC21
+
+v1.11b4
+
+FIX: Not extract all modules for EFI
+
+v1.11b5
+
+FIX: Fail to reintegrate complex Intel BIOSes properly
+FIX: Fail to extract Intel BIOS
+FIX: Error handling disabled in b4
+
+v1.11b6
+
+ADD: Brute force search compressed images (for older Intel EFI BIOSes)
+
+v1.11b7
+
+ADD: Ability to alter DSDT table
+
+FIX: Some fixes for brute force search module size calculations
+
+v1.11
+
+Release of b7
+
+v1.12
+
+ADD: Verify SLIC digital certificate
+ADD: Intel compatibility (-oa) DSDT option
+ADD: Replace additional OEM IDs
+
+FIX: Not save file open dialog directory
+
+v1.13
+
+FIX: Verify SLIC certificate crashed on systems without .NET 3.5 SP1 (now just logs unable to verify)
+
+v1.14b1
+
+ADD: Advanced Dell support
+
+v1.14b2
+
+ADD: Further Dell support (relocating RSDT/XSDT tables)
+
+FIX: Various Dell fixes
+
+v1.14b3
+
+FIX: Error inserting modifided module (size field wrong)
+FIX: Verify button not work for Dell
+
+v1.14b4
+
+ADD: Dell notebook support
+
+v1.14b5
+
+FIX: Bug introduced that meant some phoenix modules are not updated
+FIX: Improve Dell notebook support
+
+v1.14b6
+
+FIX: Warn if existing SLIC and attempting SSV2 mod
+
+v1.14b7
+
+FIX: Improve Dell notebook support
+FIX: Allow selection of SSV2/Dynamic on the basis of RW report for Dell and EFI
+
+v1.20
+
+ADD: Give creator details of existing SLIC
+
+v1.21
+
+FIX: Sometimes identified Dell modules incorrectly
+FIX: Use RW report for all mods (issue with RSDT with size)
+
+v1.22
+
+FIX: Dell notebook mod failed in some cases
+FIX: Better RSDT size safety checks
+FIX: Only scan largest module block for modules (avoids false positive modules)
+
+v1.23
+
+ADD: Decompile support for older Dell BIOSes
+ADD: Handle Intel code/split ID lock
+
+v1.24
+
+FIX: Not find RSDT for Dell dynamic mod
+FIX: Possible error in EFI SSV2 mod
+
+v1.25
+
+FIX: Dell parsing error
+FIX: complex Intel EFI parsing error
+
+v1.26
+
+ADD: Handle Dell BIOSes that require SLIC to replace MCFG
+
+FIX: Error parsing RW reports produced by latest RW Everything versions
+
+v1.27
+
+FIX: Critical bug which may brick Dell BIOS (eg. XPS 430)
+
+v1.28
+
+FIX: Sometimes a SONY lock was not properly patched
+
+v1.29
+
+ADD: Allow SLIC module in for Phoenix SSV2 mods to be inserted after last BIOSCOD module
+
+v1.30
+
+FIX: Some modules not altered in Dell BIOSes (eg. missed RSDT OEM/Table ID)
+
+v1.31
+
+ADD: Allow Dell HDR files to be SLIC'd directly (a few old Dell BIOSes need this)
+
+v1.32
+
+ADD: Handle old Dell BIOSes with Phoenix BIOS in HDR
+FIX: Error in recognition of Dell module header type
+
+v1.33
+
+FIX: Not handle old Dell BIOS (mis-detecting blocks)
+
+v1.34
+
+FIX: HDR checksums in HDRs containing Phoenix BIOSes were not corrected
+
+v1.35
+
+FIX: Incorrectly identify Dell BIOS header type
+
+v1.36
+
+ADD: Allow empty module replacement in EFI BIOSes
+
+v1.40
+
+ADD: Can now handle compression of old Dell BIOSes (thanks apokrif!)
+ADD: Now implements method used by official AMI SLIC tool (thanks to a forum member)
+FIX: Bug reinserting Dell modules with 20 header
+FIX: Failed to process compressed EFI modules when displaying module tree
+
+v1.41
+
+ADD: Handle extraction of Dell Server .EXEs
+FIX: Wrongly identify Dell header type
+
+v1.42
+
+ADD: Decompress $COMPIBM BIOSes
+
+v1.50
+
+ADD: Handle new Dell lock
+ADD: Show possible Insyde recovery filenames
+FIX: Possible failure when replacing more than one Dell module
+FIX: Ignore phoenix modules >2MB
+
+v1.51
+
+FIX: Manual modification flag ignored for module (original) method
+FIX: Allow VMware BIOS to be modded by module (original) method
+
+v1.52
+
+ADD: Show possible EFI recovery filenames
+
+v1.53
+
+FIX: Error when user asked about alterations and nothing is altered
+
+v1.54
+
+ADD: Internal update
+
+v1.55
+
+ADD: Ability to do a no SLIC mod (to update other modules) - only for EFI currently
+
+v1.56
+
+ADD: Handle Acer lock
+
+v1.57
+
+ADD: No SLIC mod now works for Dell and Phoenix (to update other modules) - manufacturer locks are still patched if the option is selected
+ADD: Handle second variety of Acer lock
+
+v1.58
+
+ADD: Handle module 51 lock
+
+v1.59
+
+ADD: Second type of module 51 lock (currently only done if Acer selected as manufacturer)
+FIX: Sometimes locks might not be removed if replacing SLIC with same OEM/Table ID as existing RSDT
+FIX: No dialog box if RW report contains a SLIC with marker zeroed
+
+v1.60
+
+ADD: Experimental ASUS EFI lock (when manufacturer Acer)
+
+v1.61
+
+ADD: Third type of module 51 lock (currently only done if Acer selected as manufacturer) 
+
+v1.62
+
+FIX: Fail to parse some HP EFI BIOSes where FVH $SIG is always FFFFFFFFh
+
+v1.63
+
+FIX: Not fail if unable to decompress module (warning still given)
+FIX: Not replace a 374 byte module with SLIC header with entire SLIC (replace empty modules must be ticked)
+
+v1.64
+
+FIX: Dell header identification error
+
+v1.65
+
+FIX: Parsing failure if last module size was invalid
+
+v1.66
+
+FIX: Few EFI parsing bugs
+FIX: Asking for RW report when no SLIC mod
+
+v1.67
+
+ADD: Improve EFI SSV2 method
+
+v1.68
+
+FIX: String searching overflow
+
+v1.69
+
+FIX: Sometimes incompletely identify SLIC in EFI modules
+
+v1.70
+
+ADD: Remove dynamic MSI lock
+FIX: Serious bug in SSV2 code generation. Made assumptions that were not always valid
+FIX: Report junk recovery filename
+
+v1.71
+
+ADD: Recognise Dell compressed EFI BIOS
+FIX: Potentially serious corner-case in Dell mods (21 header, old compression, more than one module)
+FIX: Alter way EFI mods shift modules (always look for gap first)
+
+v1.72
+
+ADD: Additional modifications to SSV2 code for ASUS variant
+FIX: Bug in code altering gap padding (failed when no gap)
+
+v1.73
+
+ADD: Additional ASUS EFI dynamic lock removal
+ADD: Maintain module size (needed for ASUS dynamic to prevent memory setting problems)
+ADD: Remove dynamic MSI lock
+ADD: Dynamic now selected as default for ASUS EFI when dummy SLIC exists in BIOS
+FIX: Failure re-integrating _C0x modules
+
+v1.74
+
+FIX: Module shrinkage disabled for SSV2 EFI
+FIX: Version number
+FIX: Failure to remove some locks on non-English systems
+FIX: Removed non-functioning ASUS lock
+
+v1.75
+
+ADD: Replace OEM/Table IDs with Module mod for non-Insyde EFI BIOSes
+
+v1.76
+
+ADD: Dynamic now selected as default for MSI EFI when dummy SLIC exists in BIOS
+FIX: Failure to properly recompress modules in a BIOS with both LZMA and Tiano compression
+
+v1.77
+
+FIX: Failed to integrate .ff modules properly
+
+v1.78
+
+FIX: Overflow bug introduced in 1.77
+
+v1.79
+
+FIX: Error handling zero byte module
+FIX: Error handing BIOS with no recovery name
+
+v1.80
+
+ADD: Additional modifications to SSV2 code
+
+v1.81
+
+ADD: ASRock manufacturer - will change DSDT OEM/Table ID
+FIX: Bug in SSV2 code
+
+v1.82
+
+FIX: Bug in SSV2 code introduced in 1.81
+
+v1.83
+
+ADD: SLP 1.0 insertion for EFI
+
+v1.84
+
+ADD: Potential new Asus lock
+ADD: Option to insert gap if module shrinks (to preserve module offsets)
+ADD: Improve failed mod detection (checks module count)
+FIX: Bug inserting modified DSDT tables that are smaller
+FIX: Recovery filename parsing bug
+FIX: Subtle bug in submodule reinsertion code
+FIX: Module method could sometimes fail
+
+v1.85
+
+ADD: New ASUS lock
+ADD: New Acer lock
+ADD: Hybrid Dell SSv2/Dynamic mod (uses existing empty SLIC space for SSV2 mod)
+FIX: Failure to reinsert module with multiple embedded FVs
+FIX: Modify SSV2 code to prevent extra mov r8b,1
+
+v1.90
+
+ADD: Better support for SLP1.0
+ADD: Tree view to Insert/Replace/Delete EFI modules 
+ADD: Replace already compressed EFI modules
+ADD: Handle encrypted HP EFIs
+ADD: Empty module replacement as default for Acer
+
+FIX: More obscure bugs in module replace code
+FIX: Important bug in module replace code (that could mean any module without submodules is places at the beginning of the EFI image)
+FIX: All delays to kill processes are now 30 seconds 
+FIX: Update 7ZIP to 9.20
+
+v1.91
+
+ADD: Support for uncompressed modules in tree view
+ADD: NVRAM method (for ASUS K43/53 EFIs)
+ADD: If Module method selected, ASUS manufacturer selected and no SLP Support module (4C...) then it will be added
+
+FIX: Some embedded firmware volumes were not being extracted
+FIX: MSI lock sometimes not detected
+FIX: The log should now be seleceted by default and written into the same directory as the BIOS/EFI.
+FIX: Multiple bugs in module insert/replace/delete in treeview
+FIX: Failed to parse EFI with invalid FVH header GUID
+
+v1.92
+
+FIX: RW report optional for EFI mods
+FIX: Dell header type identified wrongly
+
+v1.93
+
+ADD: Module method is now default
+ADD: SLP Support (4C...) module now added for all module method mods if not present (irrespective of manufacturer)
+ADD: ALASKAAMI OEM/Table ID now always changed even if no RW report
+
+FIX: SLIC string in nVidia SLI certificate in DSDT could be altered in error
+
+v1.94
+
+ADD: ASUS DMI method
+
+FIX: Split OEM/Table ID not identified in Gigabyte EFI
+
+v1.95
+
+ADD: ASUS SLP2 Module method
+
+v1.96
+
+FIX: Empty modules not replaced in EFI module method
+FIX: Handle RW 1.5+ reports (with 64 bit addresses)
+
+v1.97
+
+FIX: ImagDs signature not written to Dell HDRs
+FIX: Failed to adjust module size if FV full but has a gap that can be resized
+
+v1.98
+
+ADD: New MSI EFI lock
+ADD: Replace empty modules now default for EFI
+
+v2.00
+
+FIX: Recovery filename parsing
+FIX: Gap could be wrongly identifed when replacing modules
+
+ADD: MUCH faster EFI mods (EFIDC now a DLL)
+ADD: Option to replace 'ALASKA A M I' OEM ID for EFI mods (previously was automatic)
+
+v2.01
+
+FIX: Finally updated README
+
+ADD: New ASUS EFI lock
+ADD: More speed changes (Boyer–Moore–Horspool search algoritm and using SevenZipSharp for LZMA decompression)
+
+v2.02
+
+FIX: Bug in structure view (when EFI opened, edited, closed and re-opened)
+
+ADD: Few more speed enhancements
+ADD: For ASUS (manufacturer selected) .CAP files options selected to not alter OEM/Table ID strings
+
+v2.03
+
+FIX: Some capsules not being identified
+
+ADD: Tool now shows information about signed capsules and signed modules
+ADD: New SlpSupport is used for newer EFIs
+
+v2.04
+
+FIX: Few module insertion fixes
+FIX: New module method now inserts pubkey/marker and key into same FV volume as MSOA module
+
+ADD: New module method now allows selection of KEY file
+ADD: Use new SlpSupport modules
+ADD: SLP 1.0 using module method
+ADD: Updated README to include advanced and batch modes
+
+v2.05
+
+FIX: Speedup CRC32 routine (significant improvement for Insyde/HP mods)
+FIX: SLP 1.0 module not automatically used (still an option)
+FIX: Bugs in module processing (mods themselves were fine)
+FIX: OEM/Table ID and split ID replacement were sometimes not properly applied in EFI mods
+
+ADD: Option to only alter OEM/Table IDs in the 16Dxxx module
+ADD: Option to replace MCFG for Dell mods
+ADD: Option to allow FV choice for module and new module mods
+
+
+v2.06
+
+FIX: Handle FV embedded in RAW modules
+FIX: Various changes to FV/module parsing (also removed brute force scanning)
+
+ADD: HP WiFi Whitelist parsing (still experimental)
+ADD: Handle new Acer EFI lock
+
+v2.07
+
+FIX: Some (minor) changes to tree view
+
+ADD: Handle _ASUS__ASUS_ strings in ASUS Notebook EFIs
+
+v2.08
+
+FIX: Handling _ASUS__ASUS_ did not obey normal selection rules and prompting rules
+FIX: Error in detecting embedded FV in RAW modules
+
+ADD: Advanced options now displayed in log
+
+v2.09
+
+FIX: Various bugfixes
+
+v2.10
+
+ADD: Recovery filename is placed into the clipboard
+ADD: Compiled with VS 2012
+
+FIX: DSDT recompile error
+
+v2.11
+
+FIX: Bugs in split ID replacement code
+FIX: For new module (ASUS) mods the inserted modules are placed automatically in the correct FV (with the MSOA module)
+
+ADD: Option to compress stored submodules (can be used if the module method reports inserted SLPSupport module doesn't fit)
+
+v2.12
+
+FIX: Lock not removed in module 
+FIX: Lock incorrectly identified
+FIX: Correctly identify OA2.2 SLICs
+
+v2.13
+
+ADD: Ability to insert module anywhere in treeview (not just at end of FV)
+ADD: Ability to insert modules at end of a firmware volume before a gap
+ADD: Show module name (if known) after module in treeview
+
+FIX: Deleting submodules from DUMP didn't work
+FIX: Handle new module method when DummyMSOA module present
+FIX: Bug in OEM ID search code
+FIX: Few minor bugs in tree view
+
+v2.14
+
+FIX: Bug introduced in 2.13 that means attempts to replace a submodule will fail
+FIX: Padding sometimes incorrectly identified
+FIX: Sometimes an embedded FV would not be identified
+FIX: Sometimes DSDT replacement would fail
+FIX: Bug where modified module could be incorrectly sized
+
+v2.15
+
+FIX: Updated included IASL version
+FIX: Slow processing of Dell .WPH files
+FIX: Change more than 30 modules failed
+
+v2.16
+
+ADD: Ability to select custom SLPSUPPORT modules
+ADD: Handle compressed GUID submodules
+
+FIX: Improve handling of GUID submodules
+FIX: Failed to check for an inserted module that is too large
+FIX: Error when extracting modules in tree view
+
+v2.17
+
+FIX: Bug in compress inserted submodules code
+
+v2.18
+
+FIX: Another bug in inserting submodules code
+FIX: Bug when both EFI and Tiano compression methods used
+
+v2.19
+
+FIX: Warnings when replacing module in treeview that has wrong size information in headers
+FIX: Inserting new modules into a specific FV didn't work for 'New Module' method
+FIX: Empty modules in a GUID module where not identified
+
+v2.50
+
+ADD: Ability to properly handle submodules, including those compressed and those in GUID defined sections
+ADD: Recognise OA2.3 SLICs
+ADD: Extract ZLib compressed Dell HDRs
+ADD: Digital signing removed from beginning of AsRock EFI (when AsRock selected as manufacturer)
+
+FIX: Multiple fixes and code path changes
+FIX: Module padding bug
+FIX: Sometimes recovery name not correctly identified
+FIX: Better capsule handling
+FIX: Remove reference to OA3.0
+FIX: Improve extraction of Dell Server BIOSes
+
+v2.51
+
+FIX: Crash if inserting whole modules from tree view
+FIX: Module names not always shown in tree view
+FIX: Module parsing error
+
+v2.52
+
+FIX: Bug in Intel EFI Decompress code (Thanks to CodeRush)
+
+v2.53
+
+FIX: RW report parsing failed if there was no RSDP table
+
+v2.54
+
+FIX: Failed to handle Freeform module with no submodules
+
+v2.55
+
+ADD: Recognise GigaByte SLP module
+ADD: Option to remove ASRock digital signature (was automatic before)
+
+FIX: Select New Module as the default method with an ASUS Capsule EFI
+
+v2.56
+
+FIX: Error when trying to insert module in structure view at end of FV with only one module
+
+v2.57
+
+FIX: Failed to process Tiano compressed GUID section
+
+v2.58
+
+FIX: Bug inserting modules into selected FV
+
+v2.59
+
+FIX: Dell extraction error
+
+v2.60
+
+ADD: Recognise and remove Panasonic lock
+
+FIX: Error processing headers in a old Dell BIOS
+FIX: Mis-identify Sony Vaio as Acer
+
+v2.61
+
+ADD: Handle new header in Dell Server (non-EFI) BIOSes
+ADD: Default options for Gigabyte EFI
+ADD: Compile in VS2015
+ADD: Ability to grow some FVs (off by default)
+
+FIX: Inserting modules for new module method into wrong FV on Z170 boards
+FIX: Wrongly identified all modules as fixed in log
+
+v2.62
+
+FIX: Changes to new module method (new method for determining FV, uncompressed modules, turn off replace OEM/Table IDs by default) for Z170 boards
+
+v2.63
+
+FIX: Changed the method (again) for determining FV for new module as it would identify wrong module on older ASUS boards
+
+v2.64
+
+FIX: RW report parsing bug
+FIX: EFI BIOS misidentified as Lenovo (and crash)
+
+v2.65
+
+FIX: EFI Module grow code not properly executed when needed
+
+v2.66
+
+FIX: Various fixes for Gigabyte Z170 boards
+
+v2.67
+
+ADD: SLIC 2.4 recognition
+
+FIX: Failed to identify correct Dell header type
+FIX: Some Dell headers have invalid size
+
+v2.70
+
+ADD: Support for DELL PFS headers
+ADD: High DPI support (requires .NET 4.7)
+
+FIX: Header parsing bug
+FIX: Some improvements to dynamic resizing code (to make changed modules same size)
+FIX: Updated 7zip components
+
+v2.71
+
+FIX: Fixed window scaling
+FIX: Further changes to dynamic resizing code
+
+v2.72
+
+FIX: Parse RW reports that don't contain an RSDT table
+FIX: New key.txt for new module mods (from https://forums.mydigitallife.net/threads/tool-to-insert-replace-slic-in-phoenix-insyde-dell-efi-bioses.13194/page-204#post-1001236)
+FIX: Scroll bars in very small resolution screens
+FIX: Default header checksum changed from AAh for all to 5Ah for v1 FV.
+
+v2.73
+
+ADD: Support for old Dell BIOSes that don't have any header structure, just modules.
+
+FIX: Header scanning bug that led to 'beyond end of FV' and 'additional data' errors in the log
+FIX: Couple of label adjustments in GUI since main form made smaller
