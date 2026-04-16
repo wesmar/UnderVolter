@@ -408,7 +408,9 @@ VOID RunStartupAnimation(VOID)
   UINTN titleW     = TITLE_LEN * titleAdv;
   UINTN titleX     = (SW > titleW) ? (SW - titleW) / 2 : 0;
   UINTN titleH     = glyphH * titleScale + 4;   // +4: drop-shadow pixel
-  UINTN titleY     = boltY + boltH + SH * 30 / 100;
+  // Position title in the upper third of the gap below the bolts.
+  UINTN spaceBelowBolts = animH - (boltY + boltH);
+  UINTN titleY = boltY + boltH + (spaceBelowBolts - titleH) / 3;
   if (titleY + titleH > animH) {
     titleY = (animH > titleH + 4) ? animH - titleH - 4 : 0;
   }
