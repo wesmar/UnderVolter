@@ -678,13 +678,19 @@ The UEFI firmware stores all hidden BIOS settings in a flat byte array called `S
 
 ### Finding Offsets for Your Machine
 
-**Tools needed:**
+> **This is a one-time offline research step** — done once on any PC, not required at deployment time. If your machine is already in the [Confirmed Offsets](#confirmed-offsets) table below, skip this entirely.
+
+The byte offsets for CFG Lock and OC Lock vary between BIOS versions and board models. You find them by decoding the IFR (Internal Forms Representation) embedded in your BIOS firmware image. `IFRExtractor.exe` in `other-tools/` is a standalone tool for exactly this — no installation required.
+
+**Tools for offset discovery:**
 
 | Tool | Purpose |
 |------|---------|
-| **FPTW64.exe** | Dump BIOS firmware image (`FPTW64.exe -d bios.rom -bios`) |
-| **UEFITool** (`other-tools/`) | Extract `Setup` DXE module from firmware image |
-| **IFRExtractor.exe** (`other-tools/`) | Decode extracted module → human-readable text with VarOffset values |
+| **FPTW64.exe** | Dump BIOS firmware image (`FPTW64.exe -d bios.rom -bios`) — Intel Flash Programming Tool, obtain from your chipset support package |
+| **UEFITool** (`other-tools/`) | Open the ROM image and extract the `Setup` DXE module (.ffs file) |
+| **IFRExtractor.exe** (`other-tools/`) | Decode the extracted module → human-readable text with VarOffset values |
+
+Once you have the offsets, you only need `UnderVolter.ini` — no other tools run at boot time.
 
 **Steps:**
 
@@ -692,7 +698,7 @@ The UEFI firmware stores all hidden BIOS settings in a flat byte array called `S
 2. Open `bios.rom` in UEFITool → Ctrl+F → Text search → `Overclocking Lock`
 3. Right-click the parent `.ffs` file → **Extract as is**
 4. Open **IFRExtractor.exe** (`other-tools/`), load the `.ffs` → save `.txt` (CLI: `IFRExtractor.exe input.ffs output.txt`)
-5. Search the `.txt` for `Overclocking Lock` and `CFG Lock` — note **VarOffset** and **VarStore ID**
+5. Search the `.txt` for `Overclocking Lock` and `CFG Lock` — note the **VarOffset** value for each
 
 **Example IFR output (Dell XPS 15 7590, BIOS v1.20):**
 
@@ -703,7 +709,7 @@ CFG Lock          →  VarStore: 0x1 (Setup),  VarOffset: 0x6ED
 Overclocking Lock →  VarStore: 0x1 (Setup),  VarOffset: 0x789
 ```
 
-The VarStore ID (`0x1` here) determines which `setup_var_N` number to use in GRUB (see [BIOS Unlocking — GRUB method](#bios-unlocking) below). For UnderVolter's built-in patcher, the VarStore ID is irrelevant — it always targets the `Setup` variable by GUID.
+For UnderVolter's built-in patcher, only the **VarOffset** value matters — the VarStore ID is irrelevant. UnderVolter always targets the `Setup` variable by its GUID directly.
 
 ### Configuration
 
@@ -765,22 +771,6 @@ To find the correct byte offsets for your BIOS, use **IFRExtractor.exe** include
 | Dell Vostro 7500 | `0x3E` | `0xDA` | `CpuSetup` (0x3) |
 
 > Offsets vary between BIOS versions and machine models — always verify from your own IFR dump before patching.
-
-### Legacy: GRUB setup_var method
-
-Before `[SetupVar]` was implemented, the standard approach was a modified GRUB bootloader with a `setup_var` module. This method is preserved here for reference — it remains valid if you need to patch variables from a Linux or GRUB environment, or if you want to apply changes before deploying UnderVolter for the first time.
-
-The VarStore ID from IFR output determines the command variant:
-
-```
-VarStore: CpuSetup (0x3)  →  setup_var_3
-VarStore: Setup    (0x1)  →  setup_var_1
-```
-
-```
-setup_var_3 0xDA 0x00    # Disable Overclocking Lock
-setup_var_3 0x3E 0x00    # Disable CFG Lock
-```
 
 ---
 
