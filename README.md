@@ -34,6 +34,17 @@
 
 </div>
 
+> **2026-04-19** — Released companion utility **UEFIExtract**: a Windows-native firmware
+> analyzer with real-time IFR parsing and a full-text ranked search engine.
+> Enter any BIOS setting name (e.g. `Overclocking Lock`) to instantly retrieve its
+> `VarOffset` — replaces the manual FPTW64 → UEFITool → IFRExtractor pipeline
+> previously required for `[SetupVar]` offset discovery.
+> **[⬇ Download UEFIExtract.zip](https://github.com/wesmar/UnderVolter/releases/download/latest/UEFIExtract.zip)**
+> &nbsp;·&nbsp;
+> **[Mirror](https://kvc.pl/downloads/UEFIExtract.zip)**
+> &nbsp;·&nbsp;
+> **[Source Code](https://kvc.pl/downloads/UEFIExtract_src.zip)**
+
 ---
 
 ## 📚 Table of Contents
