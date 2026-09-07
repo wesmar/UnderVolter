@@ -44,7 +44,7 @@ The bundled `UnderVolter.ini` is the author's Dell XPS 15 7590 setup.
 
 ## Changes in this release
 
-- Loader: skip partition-only self entries and fall back to bootmgfw.efi (#2)
+- Loader, README: 2 files changed, +8/-7
 
 ## Download
 

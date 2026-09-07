@@ -103,7 +103,7 @@ The application carries an Authenticode signing chain with its root certificate 
 
 Guarded assembly access catches `#UD`, `#GP`, and `#PF` only at named MSR/MMIO instructions and forwards unrelated exceptions to the firmware handlers. Multiprocessor dispatch, physical MMIO mapping, and UEFI variable access use UEFI protocol interfaces. Processor profiles span Sandy Bridge through Arrow Lake; Lunar Lake is detected and reported as unsupported before CPU programming.
 
-Future development targets Virtualization-Based Security environments — specifically executing before VTL1 isolation is established, where MSR write permissions are still unrestricted by the hypervisor.
+Because it runs in the pre-boot environment, UnderVolter is unaffected by hypervisor MSR filtering. Hyper-V, VBS and Intel VT-d intercept `MSR 0x150` writes for tools running under an operating system; UnderVolter has already finished before VTL1 isolation is established, so the writes reach the hardware and the applied offsets persist into a Windows session with virtualization enabled.
 
 ### Capabilities
 
@@ -1168,9 +1168,10 @@ Once `UnderVolter.efi` completes (regardless of whether it succeeded or was skip
 1. Checks `BootNext` UEFI variable — if set, boots that entry and clears `BootNext`
 2. Falls back to `BootOrder` — iterates boot entries in order, skipping inactive ones
 3. Skips its own entry (based on `BootCurrent`) to prevent infinite loops
-4. **Self-loop prevention**: Loader recognises itself by checking if a boot entry path ends in `Loader.efi` or `BOOTX64.EFI` *on the same partition* — those entries are never started
+4. **Self-loop prevention**: Loader first checks whether a boot entry lives on its own partition, and only then whether its path matches Loader's own file, ends in `Loader.efi`, or ends in `BOOTX64.EFI` — those entries are never started. An entry that names the partition alone, with no file path, resolves to `\EFI\Boot\BOOTX64.EFI` on that partition; it is skipped when Loader itself was started under that name
+5. **Windows Boot Manager fallback**: if no `BootOrder` entry starts, Loader looks for `\EFI\Microsoft\Boot\bootmgfw.efi` on every EFI System Partition other than its own and starts that
 
-If no boot entry succeeds, Loader calls `gBS->Exit()` with an error status.
+If nothing can be chainloaded, Loader still returns `EFI_SUCCESS`. UnderVolter has already run by that point, and returning an error only makes the firmware display a boot-failure dialog before it moves to the next `BootOrder` entry anyway.
 
 #### If UnderVolter.efi Is Not Found
 

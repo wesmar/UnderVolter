@@ -491,10 +491,10 @@ StrEndsWith(
 //
 // A boot option is allowed to name the partition alone, with no file path node;
 // firmware then loads the removable-media fallback \EFI\Boot\BOOTX64.efi from
-// it.  When this loader was installed under that name, such an entry points
-// straight back at us, so a missing file node on our own device counts as a
-// self-reference.  Testing the device prefix first also stops a \Loader.efi or
-// \BOOTX64.EFI sitting on an unrelated disk from being skipped.
+// it.  Such an entry is a self-reference only when this loader was installed
+// under that name, which is what the file path test below decides.  Checking
+// the device prefix first also stops a \Loader.efi or \BOOTX64.EFI sitting on
+// an unrelated disk from being skipped.
 STATIC
 BOOLEAN
 IsForbiddenTarget(
