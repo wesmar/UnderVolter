@@ -22,9 +22,10 @@ BOOLEAN IniReadBool(CONST CHAR8* p, BOOLEAN Default) {
     if (*p != '=') return Default;
     p++;
     while (*p == ' ' || *p == '\t') p++;
-    if (*p == '1') return TRUE;
-    if (*p == '0') return FALSE;
-    return Default;
+    if (*p != '0' && *p != '1') return Default;
+    BOOLEAN value = (*p++ == '1');
+    while (*p == ' ' || *p == '\t') p++;
+    return (!*p || *p == '\r' || *p == '\n' || *p == ';' || *p == '#') ? value : Default;
 }
 
 UINT32 IniReadUint(CONST CHAR8* p, UINT32 Default) {
@@ -34,7 +35,13 @@ UINT32 IniReadUint(CONST CHAR8* p, UINT32 Default) {
     while (*p == ' ' || *p == '\t') p++;
     if (*p < '0' || *p > '9') return Default;
     UINT32 v = 0;
-    while (*p >= '0' && *p <= '9') v = v * 10 + (UINT32)(*p++ - '0');
+    while (*p >= '0' && *p <= '9') {
+        UINT32 digit = (UINT32)(*p++ - '0');
+        if (v > (MAX_UINT32 - digit) / 10) return Default;
+        v = v * 10 + digit;
+    }
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p && *p != '\r' && *p != '\n' && *p != ';' && *p != '#') return Default;
     return v;
 }
 
@@ -44,12 +51,13 @@ VOID IniReadPath(CONST CHAR8* p, CHAR16* Out, UINTN OutLen) {
     if (*p != '=') return;     // caller pre-fills default; leave as-is
     p++;
     while (*p == ' ' || *p == '\t') p++;
+    CHAR8 quote = (*p == '"' || *p == '\'') ? *p++ : 0;
     UINTN i = 0;
-    while (*p && *p != '\r' && *p != '\n' && i < OutLen - 1) {
+    while (*p && *p != ';' && *p != '#' && (!quote || *p != quote) && *p != '\r' && *p != '\n' && i < OutLen - 1) {
         CHAR8 c = *p++;
         Out[i++] = (c == '/') ? L'\\' : (CHAR16)c;
     }
-    while (i > 0 && Out[i - 1] == L' ') i--;
+    while (i > 0 && (Out[i - 1] == L' ' || Out[i - 1] == L'\t')) i--;
     Out[i] = L'\0';
 }
 

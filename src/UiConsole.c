@@ -189,30 +189,27 @@ static VOID GfxClearLine(UINTN line)
 }
 
 // Scroll the framebuffer up by one text row (gCellH pixels) using CopyMem,
-// then clear the newly exposed bottom row.
+// then clear the newly exposed bottom row and any padding.
 static VOID GfxScroll(VOID)
 {
-  if (gCellH == 0 || gFbHeight <= gCellH) {
+  if (gCellH == 0 || gFbHeight <= gCellH || gRows <= 1) {
     gCursorX = 0;
     gCursorY = 0;
     GfxClearScreen();
     return;
   }
 
-  UINTN rowPixels = gCellH;
-  UINTN copyPixels = (gFbHeight - rowPixels) * gPitchPixels;
+  UINTN rowPixels  = gCellH;
+  UINTN textHeight = gRows * gCellH;
+  UINTN copyPixels = (textHeight - rowPixels) * gPitchPixels;
 
   if (copyPixels > 0) {
     CopyMem(gLfb, gLfb + rowPixels * gPitchPixels, copyPixels * sizeof(UINT32));
   }
 
-  GfxFillRect(0, gFbHeight - rowPixels, gFbWidth, rowPixels, gBgColor);
+  GfxFillRect(0, textHeight - rowPixels, gFbWidth, gFbHeight - (textHeight - rowPixels), gBgColor);
 
-  if (gRows > 0) {
-    gCursorY = gRows - 1;
-  } else {
-    gCursorY = 0;
-  }
+  gCursorY = gRows - 1;
   gCursorX = 0;
 }
 
@@ -526,12 +523,18 @@ BOOLEAN UiConsoleInit(IN EFI_SYSTEM_TABLE* SystemTable)
   if (gGlyphW == 0) gGlyphW = 8;
   if (gGlyphH == 0) gGlyphH = 16;
 
-  if (gFbHeight < 700 || gFbWidth < 1024) {
-    gTextScaleX = UI_TEXT_SCALE_SMALL;
-    gTextScaleY = UI_TEXT_SCALE_SMALL;
+  if (gFbHeight >= 1800) {
+    gTextScaleX = 4;
+    gTextScaleY = 4;
+  } else if (gFbHeight >= 1200) {
+    gTextScaleX = 3;
+    gTextScaleY = 3;
+  } else if (gFbHeight >= 700) {
+    gTextScaleX = 2;
+    gTextScaleY = 2;
   } else {
-    gTextScaleX = UI_TEXT_SCALE_LARGE;
-    gTextScaleY = UI_TEXT_SCALE_LARGE;
+    gTextScaleX = 1;
+    gTextScaleY = 1;
   }
 
   gCellW = gGlyphW * gTextScaleX;
@@ -548,6 +551,17 @@ BOOLEAN UiConsoleInit(IN EFI_SYSTEM_TABLE* SystemTable)
   gGfxReady = TRUE;
   GfxClearScreen();
   return TRUE;
+}
+
+VOID UiClearScreen(VOID)
+{
+  if (!gGfxReady) {
+    return;
+  }
+  GfxClearScreen();
+  gCursorX = 0;
+  gCursorY = 0;
+  gPendingCR = FALSE;
 }
 
 UINTN UiPrint(IN CONST CHAR16* Format, ...)

@@ -6,6 +6,7 @@
 #include <Uefi.h>
 #include <Library/BaseMemoryLib.h>
 #include "HwIntrinsicsX64.h"
+#include <Library/BaseLib.h>
 
 /*******************************************************************************
 * Interrupt Descriptor Table (IDT) and its corresponding register (IDTR)
@@ -72,12 +73,11 @@ typedef struct _ISROVERRIDE {
 // Example list for MSR probing //
 //////////////////////////////////
 
+extern UINT64 gOriginalIsr6, gOriginalIsr13, gOriginalIsr14;
 ISROVERRIDE isrlist_probingmode[] = {
-  { 0x05,   &monkey_isr_5, },               ///< (#BR) Bound Range Exceeded
-  { 0x06,   &monkey_isr_6, },               ///< (#UD) Invalid Opcode
-  { 0x08,   &monkey_isr_8, },               ///< (#DF) Double Fault
-  { 0x0D,   &monkey_isr_13, },              ///< (#GP) General Protection Fault
-  { 0x12,   &monkey_isr_18, },              ///< (#MC) Machine Check
+  { 0x06, &monkey_isr_6 },
+  { 0x0D, &monkey_isr_13 },
+  { 0x0E, &monkey_isr_14 },
 };
 
 /*******************************************************************************
@@ -113,7 +113,7 @@ VOID PatchIDTEntry(IDT* idtBase, ISROVERRIDE* isro)
   dest->u1.OffsetLow = (UINT16) isrAddr;
   dest->u1.OffsetHigh = (UINT16)(isrAddr >> 16);
   dest->u1.OffsetUpper = (UINT32)(isrAddr >> 32);
-  dest->u1.TypeAddr = 0x8E;                         ///< See explanation above
+  // Preserve the firmware gate attributes, selector and IST.
 }
 
 /*******************************************************************************
@@ -148,7 +148,7 @@ VOID ApplyISRPatchTable( ISROVERRIDE *isrs,
   //
   // Probably a good idea to disable interrupts now...
   
-  DisableInterruptsOnThisCpu();
+  BOOLEAN interruptsEnabled = SaveAndDisableInterrupts();
 
   ///////////////////
   // (Un)patch the //
@@ -174,7 +174,7 @@ VOID ApplyISRPatchTable( ISROVERRIDE *isrs,
   
   gISRsPatched = 1;
   
-  EnableInterruptsOnThisCpu();
+  SetInterruptState(interruptsEnabled);
 }
 
 
@@ -191,7 +191,9 @@ VOID InstallSafeAsmExceptionHandler(VOID)
   //
   // Locate current IDTR
 
+  if (gISRsPatched) return;
   GetCurrentIdtr(&origIDTR);
+  if (origIDTR.Limit < sizeof(IDT) * 15 - 1) return;
 
   //
   // Copy current IDT table to backup
@@ -199,7 +201,14 @@ VOID InstallSafeAsmExceptionHandler(VOID)
 
   sysIDT = (IDT *)origIDTR.Base;
   
-  CopyMem( &gBackupIDT[0], sysIDT, sizeof(IDT) * 256);
+  UINTN backupSize = MIN((UINTN)origIDTR.Limit + 1, sizeof(gBackupIDT));
+  CopyMem(&gBackupIDT[0], sysIDT, backupSize);
+  UINT64* handlers[] = { &gOriginalIsr6, &gOriginalIsr13, &gOriginalIsr14 };
+  for (UINTN i = 0; i < 3; i++) {
+    IDT* entry = &gBackupIDT[isrlist_probingmode[i].vector];
+    *handlers[i] = (UINT64)entry->u1.OffsetLow | ((UINT64)entry->u1.OffsetHigh << 16) |
+                   ((UINT64)entry->u1.OffsetUpper << 32);
+  }
 
   //
   // Now that we have backups, we can start hacking
@@ -223,12 +232,14 @@ VOID RemoveAllInterruptOverrides(VOID)
   
   if (gISRsPatched) {
 
-    DisableInterruptsOnThisCpu();
+    BOOLEAN interruptsEnabled = SaveAndDisableInterrupts();
 
-    CopyMem(sysIDT, &gBackupIDT[0], sizeof(IDT) * 256);
+    for (UINTN i = 0; i < sizeof(isrlist_probingmode) / sizeof(isrlist_probingmode[0]); i++) {
+      UnpatchIDTEntry(sysIDT, &isrlist_probingmode[i]);
+    }
 
     gISRsPatched = 0;
 
-    EnableInterruptsOnThisCpu();
+    SetInterruptState(interruptsEnabled);
   }
 }

@@ -51,7 +51,7 @@ EFI_STATUS EFIAPI CpuMailbox_MMIOBusyWait(CpuMailbox* b)
   //
   // Check if the operation timed out
 
-  if ((busy) && (nspins == maxSpins)) {
+  if ((busy) && (nspins >= maxSpins)) {
     return EFI_ABORTED;
   }
 
@@ -86,7 +86,7 @@ EFI_STATUS EFIAPI CpuMailbox_MsrBusyWait(CpuMailbox *b)
   //
   // Check if the operation timed out
 
-  if ((busy) && (nspins == maxSpins)) {
+  if ((busy) && (nspins >= maxSpins)) {
     return EFI_ABORTED;
   }
 
@@ -99,53 +99,22 @@ EFI_STATUS EFIAPI CpuMailbox_MsrBusyWait(CpuMailbox *b)
 
 EFI_STATUS EFIAPI CpuMailbox_MsrReadWrite( CpuMailbox *b )
 {
-  EFI_STATUS state = EFI_SUCCESS;
-
-  const UINT32 statusBits = b->cfg.statusBits;
-  const UINT32 maxRetries = b->cfg.maxRetries;
-  const UINT32 boxLatency = b->cfg.latency;
-  const UINT32 busyFlag = b->cfg.busyFlag;
-  const UINT32 msrIdx = b->cfg.addr;
-
-  UINT32 nRetries = 0;
-
-  do {
-
-    MailboxBody test;
-    state = EFI_SUCCESS;
-
-    b->b.box.ifce |= busyFlag;
-
-    pm_wrmsr64(msrIdx, b->b.u64);
-
-    if (EFI_ERROR(CpuMailbox_MsrBusyWait(b))) {
-      state = EFI_INVALID_PARAMETER;
-    }
-
-    b->b.u64 = pm_rdmsr64(msrIdx);
-
-    MicroStall(boxLatency);
-
-    test.u64 = pm_rdmsr64(msrIdx);
-
-    //
-    // Verify if the result is correct
-
-    if (b->b.box.ifce != test.box.ifce) {
-      if (b->b.box.data != test.box.data) {
-        state = EFI_INVALID_PARAMETER;
-      }
-    }
-
-    nRetries++;
-
-  } while ((state!=EFI_SUCCESS)&&(nRetries<maxRetries));
-
-  //
-  // Status
-  
-  b->status = b->b.box.ifce & statusBits;
-
+  const UINT64 request = b->b.u64;
+  EFI_STATUS state = EFI_DEVICE_ERROR;
+  for (UINT32 attempt = 0; attempt < b->cfg.maxRetries; attempt++) {
+    // BusyWait overwrites the body. Preserve the original command across retries.
+    if (EFI_ERROR(CpuMailbox_MsrBusyWait(b))) return EFI_TIMEOUT;
+    b->b.u64 = request;
+    b->b.box.ifce |= b->cfg.busyFlag;
+    if (pm_wrmsr64(b->cfg.addr, b->b.u64)) return EFI_DEVICE_ERROR;
+    if (EFI_ERROR(CpuMailbox_MsrBusyWait(b))) return EFI_TIMEOUT;
+    MailboxBody result = b->b;
+    MicroStall(b->cfg.latency);
+    b->b.u64 = pm_rdmsr64(b->cfg.addr);
+    if (b->b.u64 != result.u64) continue;
+    b->status = b->b.box.ifce & b->cfg.statusBits;
+    return b->status ? EFI_DEVICE_ERROR : EFI_SUCCESS;
+  }
   return state;
 }
 

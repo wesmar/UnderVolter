@@ -27,18 +27,13 @@ UINT32 GetPkgPowerUnits(
 {
   UINT64 val = pm_rdmsr64(MSR_PACKAGE_POWER_SKU_UNIT);
 
-  *timeUnits =   (UINT32)((val) & 0x00ff0000) >> 16;
-  *energyUnits = (UINT32)((val) & 0x0000ff00) >> 16;
-  
-  UINT32 powerUnits = (UINT32)(val & 0xFF);
+  // SDM Vol.4, MSR_RAPL_POWER_UNIT (0x606):
+  //   bits  3:0  power units, bits 12:8 energy units, bits 19:16 time units
 
-  if (powerUnits == 0) {
-    powerUnits = 1;
-  }
-  else {
-    powerUnits = 1;
-    powerUnits <<= val;
-  }
+  *timeUnits =   (UINT32)((val & 0x000f0000) >> 16);
+  *energyUnits = (UINT32)((val & 0x00001f00) >> 8);
+
+  UINT32 powerUnits = 1u << (UINT32)(val & 0x0f);
 
   return powerUnits;
 }
@@ -122,13 +117,11 @@ void SetPkgPowerLimit12(
   }
 
   if (pl1w != MAX_POWAH) {
-    xform_pl1w = pl1w * powerUnits;
-    xform_pl1w = (xform_pl1w) ? xform_pl1w / 1000 : 0;
+    xform_pl1w = (UINT32)MIN(((UINT64)pl1w * powerUnits) / 1000, 0x7fff);
   }
 
   if (pl2w != MAX_POWAH) {
-    xform_pl2w = pl2w * powerUnits;
-    xform_pl2w = (xform_pl2w) ? xform_pl2w / 1000 : 0;
+    xform_pl2w = (UINT32)MIN(((UINT64)pl2w * powerUnits) / 1000, 0x7fff);
   }
 
   //
@@ -169,13 +162,13 @@ void SetPkgPowerLimit12(
 
       if (TNOERR) {
         // TIME: lo[23:17] = Y (5-bit mantissa), lo[24:23] = X (2-bit exponent)
-        msr.u32.lo &= 0xff01ffff;
-        msr.u32.lo |= (UINT32)(FX) << 22;
+        msr.u32.lo &= 0xfe01ffff;
+        msr.u32.lo |= (UINT32)(FX) << 23;
         msr.u32.lo |= (UINT32)(FY) << 17;
       }
     }
     else {
-      msr.u32.lo &= 0xff01ffff;
+      msr.u32.lo &= 0xfe01ffff;
     }
 
     /////////
@@ -195,13 +188,13 @@ void SetPkgPowerLimit12(
 
       if (TNOERR) {
         // TIME: hi[23:17] = Y, hi[24:23] = X (same layout as PL1 in lo DWORD)
-        msr.u32.hi &= 0xff01ffff;
-        msr.u32.hi |= (UINT32)(FX) << 22;
+        msr.u32.hi &= 0xfe01ffff;
+        msr.u32.hi |= (UINT32)(FX) << 23;
         msr.u32.hi |= (UINT32)(FY) << 17;
       }
     }
     else {
-      msr.u32.hi &= 0xff01ffff;
+      msr.u32.hi &= 0xfe01ffff;
     }
 
     pm_xio_write64(dst, (dst == IO_MSR) ?
@@ -272,14 +265,12 @@ VOID EFIAPI SetPlatformPowerLimit12(
 
   if (pl1w != MAX_POWAH)
   {
-    xform_pl1w = pl1w * unitsW;
-    xform_pl1w = (xform_pl1w) ? xform_pl1w / 1000 : 0;
+    xform_pl1w = (UINT32)MIN(((UINT64)pl1w * unitsW) / 1000, 0x7fff);
   }
 
   if (pl2w != MAX_POWAH)
   {
-    xform_pl2w = pl2w * unitsW;
-    xform_pl2w = (xform_pl2w) ? xform_pl2w / 1000 : 0;
+    xform_pl2w = (UINT32)MIN(((UINT64)pl2w * unitsW) / 1000, 0x7fff);
   }
 
   xform_pl1t = (pl1t > 0x7F) ? 0x7F : pl1t;
@@ -308,8 +299,8 @@ VOID EFIAPI SetPlatformPowerLimit12(
 
     // TIME
     if (TNOERR) {
-      msr.u32.lo &= 0xff01ffff;
-      msr.u32.lo |= (UINT32)(FX) << 22;
+      msr.u32.lo &= 0xfe01ffff;
+      msr.u32.lo |= (UINT32)(FX) << 23;
       msr.u32.lo |= (UINT32)(FY) << 17;
     }
     else {
@@ -319,7 +310,7 @@ VOID EFIAPI SetPlatformPowerLimit12(
   }
   else {
     msr.u32.lo &= ~vmask1;
-    msr.u32.lo &= 0xff01ffff;
+    msr.u32.lo &= 0xfe01ffff;
   }
 
   /////////
@@ -406,26 +397,21 @@ VOID EFIAPI SetPL12MSRLock( const UINT8 lock )
  * SetPL12MMIOLock
  ******************************************************************************/
 
-// Mirror the lock bit from MSR_PACKAGE_POWER_LIMIT into the MCHBAR MMIO
-// registers (0x59A0 / 0x59A4).  Only writes if gMCHBAR was successfully
-// discovered at initialization.
+// Set the lock bit (bit31 of the high dword) in the MCHBAR MMIO mirror of
+// PACKAGE_POWER_LIMIT (0x59A0 / 0x59A4).  Only writes if gMCHBAR was
+// discovered at initialization.  The underlying primitive is an OR, so this
+// can only set the lock -- lock==0 is accepted and does nothing, matching the
+// hardware, where the bit is sticky until reset.
 VOID EFIAPI SetPL12MMIOLock(const UINT8 lock)
 {
   if (lock < 2) {
 
     MiniTraceEx("Setting MMIO PL1/2 Lock");
 
-    QWORD msr = { 0 };
-
-    msr.u64 = pm_rdmsr64(MSR_PACKAGE_POWER_LIMIT);
-
-    msr.u32.hi = (lock) ?
-      msr.u32.hi | bit31u32 :
-      msr.u32.hi & ~bit31u32;
-
     if (gMCHBAR) {
-      pm_mmio_or32(gMCHBAR + MMIO_PACKAGE_POWER_LIMIT,    msr.u32.lo);
-      pm_mmio_or32(gMCHBAR + MMIO_PACKAGE_POWER_LIMIT_HI, msr.u32.hi);
+      if (lock) {
+        pm_mmio_or32(gMCHBAR + MMIO_PACKAGE_POWER_LIMIT_HI, bit31u32);
+      }
     }
 
     MicroStall(3);
@@ -569,8 +555,7 @@ VOID EFIAPI SetPlatformPowerLimit3(
 
   if (pl3w != MAX_POWAH)
   {
-    xform_pl3w = pl3w * unitsW;
-    xform_pl3w = (xform_pl3w) ? xform_pl3w / 1000 : 0;
+    xform_pl3w = (UINT32)MIN(((UINT64)pl3w * unitsW) / 1000, 0x7fff);
   }
   
   msr.u64 = pm_rdmsr64(MSR_PL3_CONTROL);
@@ -594,8 +579,8 @@ VOID EFIAPI SetPlatformPowerLimit3(
 
     if (TNOERR) {
       // TIME
-      msr.u32.lo &= 0xff01ffff;
-      msr.u32.lo |= (UINT32)(FX) << 22;
+      msr.u32.lo &= 0xfe01ffff;
+      msr.u32.lo |= (UINT32)(FX) << 23;
       msr.u32.lo |= (UINT32)(FY) << 17;
     }
   }
@@ -690,15 +675,14 @@ void SetPP0PowerLimit(
   xform_pp0w = MAX_POWAH;
   xform_tau = 0x7fff;
 
-  TNOERR = FindTauConsts(pp0t, (UINT8)powerUnits, &FX, &FY);
+  TNOERR = FindTauConsts(pp0t, (UINT8)timeUnits, &FX, &FY);
 
   if (!TNOERR) {
     return;
   }
 
   if (pp0w != MAX_POWAH) {
-    xform_pp0w = pp0w * powerUnits;
-    xform_pp0w = (xform_pp0w) ? xform_pp0w / 1000 : 0;
+    xform_pp0w = (UINT32)MIN(((UINT64)pp0w * powerUnits) / 1000, 0x7fff);
   }
 
   //
@@ -728,8 +712,8 @@ void SetPP0PowerLimit(
 
     if (TNOERR) {
       // TIME
-      msr.u32.lo &= 0xff01ffff;
-      msr.u32.lo |= (UINT32)(FX) << 22;
+      msr.u32.lo &= 0xfe01ffff;
+      msr.u32.lo |= (UINT32)(FX) << 23;
       msr.u32.lo |= (UINT32)(FY) << 17;
     }
   }

@@ -425,9 +425,12 @@ if ($isTrustedByEmbeddedRoot) {
     Write-Warn "          The root public key does not sign the EFI directly; it verifies the leaf signing certificate, while the leaf certificate verifies the CMS signature on the file."
 } else {
     Write-Fail "Result 2: the EFI signature does NOT validate end-to-end against the embedded root certificate."
+    exit 1
 }
 
 if ($TargetPath -like "*\\x64\\Release\\UnderVolter.efi") {
     Write-Host ""
     Write-Warn "Note: build.ps1 signs bin\\UnderVolter.efi. If x64\\Release\\UnderVolter.efi is unsigned, Secure Boot will reject it."
 }
+
+exit 0

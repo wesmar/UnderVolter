@@ -5,6 +5,7 @@
 #include <Library/IoLib.h>
 #include <Library/UefiLib.h>
 #include <Library/TimerLib.h>
+#include <Library/UefiBootServicesTableLib.h>
 #include "CpuInfo.h"
 #include "CpuData.h"
 #include "HwIntrinsicsX64.h"
@@ -41,57 +42,29 @@ UINT64 gXtalFreq = 0;
 // Calibrate gTscFreq (TSC ticks/second) using CPUID leaf 0x15:
 //   leaf 0x15: eax=denominator, ebx=numerator, ecx=crystal_Hz (may be 0)
 //   TSC freq = crystal * ebx / eax
-// If crystal is not reported (ecx==0), derive it from CPUID 0x16 base MHz.
-// On QEMU or hypervisors where 0x15 returns zero, falls back to a hard-coded
-// 124.783 MHz default (prevents divide-by-zero; stalls will be inaccurate).
+// If the ratio or crystal is missing, measure against the firmware Stall service.
 EFI_STATUS EFIAPI InitializeTscVars(VOID)
 {
-  UINT64 tmp;
   UINT32 regs[4] = { 0 };
-
-  if(gCpuInfo.maxf >= 0x15)
-    AsmCpuidRegisters(0x15, regs);
-
-  gXtalFreq = regs[2];  // ecx = nominal core crystal clock Hz
-
-  if ((regs[0] == 0) || (regs[1] == 0)) {
-
-    //
-    // Totally bogus values
-    // TODO: calibrate using some known clock source
-
-    regs[0] = regs[1] = 1;
-    gTscFreq = 124783;
-    
-    return EFI_SUCCESS;
-  }
-
-  if(gXtalFreq == 0)
-  {
-    UINT32 regs2[4] = { 0 };
-
-    if (gCpuInfo.maxf >= 0x15)
-      AsmCpuidRegisters(0x16, regs2);
-
-    // Derive crystal from base CPU MHz (leaf 0x16 eax) * ratio
-    gXtalFreq = (UINT64)regs2[0] * 1000000 * (UINT64)regs[0] / (UINT64)regs[1];
-
-    if (gXtalFreq == 0) {
-      gXtalFreq = 23958333;  // 24 MHz nominal; no reliable way to probe SKU here
+  gTscFreq = gXtalFreq = 0;
+  if (gCpuInfo.maxf >= 0x15) AsmCpuidRegisters(0x15, regs);
+  gXtalFreq = regs[2];
+  if (regs[0] && regs[1] && regs[2]) {
+    gTscFreq = ((UINT64)regs[2] * regs[1] + regs[0] / 2) / regs[0];
+  } else {
+    // Measure against the firmware delay service instead of guessing 2 GHz.
+    UINT64 best = MAX_UINT64;
+    for (UINTN sample = 0; sample < 3; sample++) {
+      UINT64 start = __rdtsc();
+      EFI_STATUS status = gBS->Stall(10000);
+      UINT64 delta = __rdtsc() - start;
+      if (EFI_ERROR(status)) return status;
+      if (delta && delta < best) best = delta;
     }
+    if (best == MAX_UINT64 || best > MAX_UINT64 / 100) return EFI_DEVICE_ERROR;
+    gTscFreq = best * 100;
   }
-
-  // TSC freq = crystal * ebx / eax  (rounded)
-  tmp = (UINT64)gXtalFreq * (UINT64)regs[1];
-
-  if (regs[0] > 1) {
-    tmp += (UINT64)regs[0] >> 1;  // round half-up before integer divide
-    tmp /= (UINT64)regs[0];
-  }
-
-  gTscFreq = (UINT32)tmp;
-
-  return EFI_SUCCESS;
+  return gTscFreq ? EFI_SUCCESS : EFI_DEVICE_ERROR;
 }
 
 /*******************************************************************************
@@ -99,14 +72,13 @@ EFI_STATUS EFIAPI InitializeTscVars(VOID)
  ******************************************************************************/
 
 // Spin-wait for the specified number of TSC ticks using PAUSE to yield to the
-// memory subsystem.  TSC wrap-around is not guarded (counter resets after ~292
-// years at 1 GHz; irrelevant in a UEFI pre-boot context).
+// memory subsystem. Unsigned subtraction also handles a TSC wrap-around.
 VOID EFIAPI StallCpu(const UINT64 ticks)
 {
 
-  UINT64 endTicks = __rdtsc() + ticks;
+  UINT64 startTicks = __rdtsc();
 
-  while (__rdtsc() <= endTicks) {
+  while (__rdtsc() - startTicks < ticks) {
     _mm_pause();
   }
 }
@@ -115,10 +87,25 @@ VOID EFIAPI StallCpu(const UINT64 ticks)
  * NanoStall
  ******************************************************************************/
 
+// Keep the full product until division; long delays must not wrap at 64 bits.
+static UINT64 ScaleTicks(UINT64 Value, UINT64 Multiplier, UINT64 Divisor)
+{
+  if (!Divisor) return 0;
+#if defined(_MSC_VER)
+  UINT64 High, Remainder;
+  UINT64 Low = _umul128(Value, Multiplier, &High);
+  if (High >= Divisor) return MAX_UINT64;
+  return _udiv128(High, Low, Divisor, &Remainder);
+#else
+  __uint128_t Result = (__uint128_t)Value * Multiplier / Divisor;
+  return Result > MAX_UINT64 ? MAX_UINT64 : (UINT64)Result;
+#endif
+}
+
 // Convert ns to TSC ticks (ns * gTscFreq / 1e9) and spin-wait.
 VOID EFIAPI NanoStall (const UINT64 ns)
 {
-  UINT64 ticks = ns * gTscFreq / 1000000000u;
+  UINT64 ticks = ScaleTicks(ns, gTscFreq, 1000000000u);
 
   StallCpu(ticks);
 }
@@ -130,7 +117,7 @@ VOID EFIAPI NanoStall (const UINT64 ns)
 // Convert µs to TSC ticks (us * gTscFreq / 1e6) and spin-wait.
 VOID EFIAPI MicroStall(const UINT64 us)
 {
-  UINT64 ticks = us * gTscFreq / 1000000u;
+  UINT64 ticks = ScaleTicks(us, gTscFreq, 1000000u);
 
   StallCpu(ticks);
 }
@@ -142,7 +129,7 @@ VOID EFIAPI MicroStall(const UINT64 us)
 // Convert a raw TSC delta to nanoseconds: Ticks * 1e9 / gTscFreq.
 UINT64 EFIAPI TicksToNanoSeconds(UINT64 Ticks)  
 {
-  return (UINT64)(1000000000u * Ticks) / gTscFreq;
+  return ScaleTicks(Ticks, 1000000000ULL, gTscFreq);
 }
 
 /*******************************************************************************

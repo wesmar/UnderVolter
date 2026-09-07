@@ -395,10 +395,7 @@ VOID PrintPlatformSettings(IN PLATFORM* psys)
       UINTN totalRows = (fh > 0 && SH > 0) ? SH / fh : 40;
       if (curRow + skipRows + 1 > totalRows) {
         UINTN newRow = (totalRows > skipRows + 2) ? totalRows - skipRows - 2 : 0;
-        UINTN clearY = newRow * fh;
-        if (clearY < SH) {
-          UiGfxFillRectRgb(0, clearY, SW, SH - clearY, 0, 0, 0);
-        }
+        UiGfxFillRectRgb(0, 0, SW, SH, 0, 0, 0);
         curRow = newRow;
         UiGfxSetCursor(0, curRow);
       }

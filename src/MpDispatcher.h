@@ -4,12 +4,14 @@
 
 #include "Platform.h"
 
+typedef EFI_STATUS (EFIAPI *CPU_STATUS_PROCEDURE)(VOID*);
+
 // Run proc on the CPU identified by CpuNumber; falls back to in-place execution
 // on BSP if MP services are unavailable or CpuNumber == BootProcessor.
 EFI_STATUS EFIAPI RunOnPackageOrCore(
   const IN PLATFORM *Platform,
   const IN UINTN CpuNumber,
-  const IN EFI_AP_PROCEDURE proc,
+  const IN CPU_STATUS_PROCEDURE proc,
   IN VOID *param OPTIONAL
 );
 

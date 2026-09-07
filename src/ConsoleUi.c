@@ -4,6 +4,7 @@
 //               Falls back to an ASCII art banner when GOP is unavailable.
 #include "ConsoleUi.h"
 #include "UiConsole.h"
+#include "DelayX86.h"
 #include <Library/UefiBootServicesTableLib.h>     // gBS
 
 // ─── Sine LUT (64 entries, values 0-255, one full cycle) ─────────────────────
@@ -28,35 +29,74 @@ static UINT8 ClampU8(UINTN v)
   return (UINT8)(v > 255 ? 255 : v);
 }
 
-// ─── Lightning bolt shape ─────────────────────────────────────────────────────
-// Grid: 16 wide x 28 tall (multiply by `scale` for real pixels).
-// Wide 4-unit strokes, sharp diagonal upper prong, full crossbar, lower spike.
-// RIGHT-FACING bolt: upper prong sweeps top-right to bottom-left,
-// lower prong sweeps back to the far right.
+// ─── Sleek High-Voltage Lightning Bolt Shape ──────────────────────────────────
+// Grid: 16 wide x 32 tall. Sleek 2-4 unit strokes, razor-sharp needle tips at
+// top and bottom, aggressive angular kick.
 typedef struct { UINT8 x, y, w, h; } BRECT;
 
 static const BRECT kBolt[] = {
-  // Upper shaft: solid, nearly vertical
-  {  6,  0, 10,  3 },
-  {  5,  3, 10,  3 },
-  {  4,  6, 10,  3 },
-  {  3,  9, 10,  4 },
-  // The intense jagged crossbar (kink)
-  {  2, 13, 14,  3 },
-  // Lower spike: sharp and directed straight down
-  {  7, 16,  8,  3 },
-  {  6, 19,  6,  3 },
-  {  5, 22,  4,  3 },
-  {  4, 25,  2,  3 },
+  // Upper needle & diagonal sweep down-left
+  { 13,  0, 2, 2 },
+  { 11,  2, 3, 3 },
+  {  9,  5, 3, 3 },
+  {  7,  8, 4, 3 },
+  {  5, 11, 4, 3 },
+  {  3, 14, 4, 2 },
+  // Jagged razor crossbar shooting back to the right
+  {  2, 15, 12, 2 },
+  {  5, 17,  8, 2 },
+  // Lower needle spike shooting down-left to a 1px tip
+  {  7, 19, 4, 3 },
+  {  6, 22, 3, 3 },
+  {  5, 25, 3, 3 },
+  {  4, 28, 2, 2 },
+  {  3, 30, 1, 2 },
 };
 #define BOLT_SEGS   (sizeof(kBolt) / sizeof(kBolt[0]))
 #define BOLT_GRID_W 16
-#define BOLT_GRID_H 28
+#define BOLT_GRID_H 32
 
-// ─── Draw functions: normal (right-facing) and mirrored (left-facing) ─────────
+// ─── Fast Integer Hash for Electric Noise / Stochastic Jitter ─────────────────
+static UINT32 FastHash(UINT32 v)
+{
+  v ^= v >> 16;
+  v *= 0x7feb352d;
+  v ^= v >> 15;
+  v *= 0x846ca68b;
+  v ^= v >> 16;
+  return v;
+}
+
+// ─── Integer Bresenham Line Drawing (No libc, pure integer) ───────────────────
+static VOID DrawGfxLine(
+  INTN x0, INTN y0,
+  INTN x1, INTN y1,
+  UINTN thickness,
+  UINT8 r, UINT8 g, UINT8 b
+)
+{
+  INTN dx = x1 > x0 ? x1 - x0 : x0 - x1;
+  INTN dy = y1 > y0 ? y1 - y0 : y0 - y1;
+  INTN sx = x0 < x1 ? 1 : -1;
+  INTN sy = y0 < y1 ? 1 : -1;
+  INTN err = (dx > dy ? dx : -dy) / 2;
+
+  while (1) {
+    if (x0 >= 0 && y0 >= 0) {
+      UiGfxFillRectRgb((UINTN)x0, (UINTN)y0, thickness, thickness, r, g, b);
+    }
+    if (x0 == x1 && y0 == y1) break;
+    INTN e2 = err;
+    if (e2 > -dx) { err -= dy; x0 += sx; }
+    if (e2 <  dy) { err += dx; y0 += sy; }
+  }
+}
+
+// ─── Draw functions with White-Hot Plasma Core Spine ─────────────────────────
 
 static VOID DrawBolt(UINTN bx, UINTN by, UINTN scale, UINT8 r, UINT8 g, UINT8 b)
 {
+  // Main colored body
   for (UINTN i = 0; i < BOLT_SEGS; i++) {
     UiGfxFillRectRgb(
       bx + (UINTN)kBolt[i].x * scale,
@@ -64,6 +104,20 @@ static VOID DrawBolt(UINTN bx, UINTN by, UINTN scale, UINT8 r, UINT8 g, UINT8 b)
       (UINTN)kBolt[i].w * scale,
       (UINTN)kBolt[i].h * scale,
       r, g, b);
+  }
+  // White-hot plasma core spine running down the center
+  if (scale >= 2) {
+    for (UINTN i = 0; i < BOLT_SEGS; i++) {
+      UINTN w = (UINTN)kBolt[i].w * scale;
+      UINTN coreW = (w > 3) ? 2 : 1;
+      UINTN coreX = bx + (UINTN)kBolt[i].x * scale + (w - coreW) / 2;
+      UiGfxFillRectRgb(
+        coreX,
+        by + (UINTN)kBolt[i].y * scale,
+        coreW,
+        (UINTN)kBolt[i].h * scale,
+        255, 255, 255);
+    }
   }
 }
 
@@ -79,129 +133,146 @@ static VOID DrawBoltMirror(UINTN bx, UINTN by, UINTN scale, UINT8 r, UINT8 g, UI
       (UINTN)kBolt[i].h * scale,
       r, g, b);
   }
+  if (scale >= 2) {
+    for (UINTN i = 0; i < BOLT_SEGS; i++) {
+      UINTN mx = (UINTN)(BOLT_GRID_W - (UINTN)kBolt[i].x - (UINTN)kBolt[i].w);
+      UINTN w = (UINTN)kBolt[i].w * scale;
+      UINTN coreW = (w > 3) ? 2 : 1;
+      UINTN coreX = bx + mx * scale + (w - coreW) / 2;
+      UiGfxFillRectRgb(
+        coreX,
+        by + (UINTN)kBolt[i].y * scale,
+        coreW,
+        (UINTN)kBolt[i].h * scale,
+        255, 255, 255);
+    }
+  }
 }
 
-// Soft glow halo: 1-px border at ~20% brightness around each segment.
+// Soft glow halo around each sleek segment
 static VOID DrawBoltGlow(UINTN bx, UINTN by, UINTN scale, UINT8 r, UINT8 g, UINT8 b)
 {
-  UINT8 gr = r / 5;
-  UINT8 gg = g / 5;
-  UINT8 gb = b / 5;
+  UINT8 gr = r / 4;
+  UINT8 gg = g / 4;
+  UINT8 gb = b / 4;
   for (UINTN i = 0; i < BOLT_SEGS; i++) {
     UINTN sx = bx + (UINTN)kBolt[i].x * scale;
     UINTN sy = by + (UINTN)kBolt[i].y * scale;
     UINTN sw = (UINTN)kBolt[i].w * scale;
     UINTN sh = (UINTN)kBolt[i].h * scale;
-    if (sx >= 2 && sy >= 2) {
-      UiGfxFillRectRgb(sx - 1, sy - 1, sw + 2, 1,  gr, gg, gb);
-      UiGfxFillRectRgb(sx - 1, sy + sh, sw + 2, 1, gr, gg, gb);
-      UiGfxFillRectRgb(sx - 1, sy,      1,      sh, gr, gg, gb);
-      UiGfxFillRectRgb(sx + sw, sy,     1,      sh, gr, gg, gb);
+    if (sx >= 1 && sy >= 1) {
+      UiGfxFillRectRgb(sx - 1, sy - 1, sw + 2, 1,      gr, gg, gb);
+      UiGfxFillRectRgb(sx - 1, sy + sh, sw + 2, 1,      gr, gg, gb);
+      UiGfxFillRectRgb(sx - 1, sy,      1,      sh,     gr, gg, gb);
+      UiGfxFillRectRgb(sx + sw, sy,     1,      sh,     gr, gg, gb);
     }
   }
 }
 
 static VOID DrawBoltMirrorGlow(UINTN bx, UINTN by, UINTN scale, UINT8 r, UINT8 g, UINT8 b)
 {
-  UINT8 gr = r / 5;
-  UINT8 gg = g / 5;
-  UINT8 gb = b / 5;
+  UINT8 gr = r / 4;
+  UINT8 gg = g / 4;
+  UINT8 gb = b / 4;
   for (UINTN i = 0; i < BOLT_SEGS; i++) {
     UINTN mx = (UINTN)(BOLT_GRID_W - (UINTN)kBolt[i].x - (UINTN)kBolt[i].w);
     UINTN sx = bx + mx * scale;
     UINTN sy = by + (UINTN)kBolt[i].y * scale;
     UINTN sw = (UINTN)kBolt[i].w * scale;
     UINTN sh = (UINTN)kBolt[i].h * scale;
-    if (sx >= 2 && sy >= 2) {
-      UiGfxFillRectRgb(sx - 1, sy - 1, sw + 2, 1,  gr, gg, gb);
-      UiGfxFillRectRgb(sx - 1, sy + sh, sw + 2, 1, gr, gg, gb);
-      UiGfxFillRectRgb(sx - 1, sy,      1,      sh, gr, gg, gb);
-      UiGfxFillRectRgb(sx + sw, sy,     1,      sh, gr, gg, gb);
+    if (sx >= 1 && sy >= 1) {
+      UiGfxFillRectRgb(sx - 1, sy - 1, sw + 2, 1,      gr, gg, gb);
+      UiGfxFillRectRgb(sx - 1, sy + sh, sw + 2, 1,      gr, gg, gb);
+      UiGfxFillRectRgb(sx - 1, sy,      1,      sh,     gr, gg, gb);
+      UiGfxFillRectRgb(sx + sw, sy,     1,      sh,     gr, gg, gb);
     }
   }
 }
 
-// ─── Integer square root (Newton's method, no libc) ──────────────────────────
-static UINTN ISqrt(UINTN n)
+// ─── Jagged Electric Arc (Tesla High-Voltage Discharge) ───────────────────────
+// Replaces the artificial mathematical ellipse with a realistic jagged, crackling
+// plasma arc with stochastic jitter, branching sparks, and white-hot filament.
+#define ARC_SEGS 16
+
+static VOID DrawJaggedElectricArc(
+  UINTN frame,
+  UINTN x1, UINTN x2,
+  UINTN midY,
+  UINTN maxY,
+  UINTN scale
+)
 {
-  if (n == 0) return 0;
-  UINTN x = n, y = (n + 1) / 2;
-  while (y < x) { x = y; y = (x + n / x) / 2; }
-  return x;
-}
+  if (x2 <= x1 + 20) return;
 
-// ─── Elliptic arc connecting the two bolts ───────────────────────────────────
-// A single sine controls alternating arc visibility:
-//   phase > 128  → only the top arc lights up (white-yellow)
-//   phase < 128  → only the bottom arc lights up (gold-amber)
-//   phase == 128 → both arcs dark (clean crossover with no overlap)
-static VOID DrawEllipticArc(
-    UINTN frame, UINTN x1, UINTN x2, UINTN midY,
-    UINTN maxY, UINTN scale,
-    UINT8 r, UINT8 g, UINT8 b)
-{
-  (VOID)r; (VOID)g; (VOID)b;
-
-  if (x2 <= x1) return;
-
-  UINTN cx = (x1 + x2) / 2;
-  UINTN a  = (x2 - x1) / 2;
-  if (a == 0) return;
-
-  // Minor radius: keeps arc segments close to the midline
-  UINTN bv = 10 * scale;
-  if (bv < 8) bv = 8;
-
-  // Single sine: phase > 128 → top arc, phase < 128 → bottom arc
-  UINT8 phase = SinU8((frame * 7) & 63);
-
-  UINT8 brightTop, brightBot;
-  if (phase >= 128) {
-    brightTop = (UINT8)((UINTN)(phase - 128) * 2);  // 0..230
-    brightBot = 0;
-  } else {
-    brightTop = 0;
-    brightBot = (UINT8)((UINTN)(128 - phase) * 2);  // 0..232
+  // Staccato discharge pulses: high-frequency flicker with chaotic bursts
+  UINT32 surge = FastHash((UINT32)(frame * 17));
+  if ((surge % 10) >= 8) {
+    // Rest frame (intermittent spark pause for realism)
+    return;
   }
 
-  // Top arc: white-yellow; blue channel peaks to white at full brightness
-  UINT8 rT = (UINT8)((UINTN)255 * brightTop / 255);
-  UINT8 gT = (UINT8)((UINTN)220 * brightTop / 255);
-  UINT8 bT = (UINT8)((UINTN)brightTop * brightTop / 255);
-  UINT8 grT = rT / 7, ggT = gT / 7, gbT = bT / 7;
+  BOOLEAN isTwin = (surge % 10) < 3; // 30% chance of twin arcs
 
-  // Bottom arc: gold-amber
-  UINT8 rB  = (UINT8)((UINTN)200 * brightBot / 255);
-  UINT8 gB  = (UINT8)((UINTN)100 * brightBot / 255);
-  UINT8 grB = rB / 7, ggB = gB / 7;
+  INTN px[ARC_SEGS + 1];
+  INTN py[ARC_SEGS + 1];
 
-  UINTN thick = (scale > 1) ? scale : 2;
-  UINTN a2    = a * a;
+  UINTN span = x2 - x1;
+  UINTN step = span / ARC_SEGS;
 
-  for (UINTN px = x1; px <= x2; px++) {
-    INTN  dx  = (INTN)px - (INTN)cx;
-    UINTN adx = (UINTN)(dx >= 0 ? dx : -dx);
-    UINTN dx2 = adx * adx;
-    if (dx2 > a2) continue;
+  INTN maxJitter = (INTN)(scale * 5 + 3);
+  INTN archBias  = ((surge & 1) ? -1 : 1) * (INTN)(scale * 4);
 
-    UINTN sinT = ISqrt((a2 - dx2) * (UINTN)1024 * (UINTN)1024 / a2);
-
-    INTN topY = (INTN)midY - (INTN)(bv * sinT / 1024);
-    INTN botY = (INTN)midY + (INTN)(bv * sinT / 1024);
-
-    // Top arc — only rendered when brightTop > 0
-    if (brightTop > 0 && topY >= 2 && (UINTN)topY + thick + 4 < maxY) {
-      UiGfxFillRectRgb(px, (UINTN)topY - 2, 1, thick + 4, grT, ggT, gbT);
-      UiGfxFillRectRgb(px, (UINTN)topY,     1, thick,     rT,  gT,  bT);
-      if (brightTop > 180)
-        UiGfxFillRectRgb(px, (UINTN)topY, 1, 1, 255, 255, 255);
+  for (UINTN i = 0; i <= ARC_SEGS; i++) {
+    px[i] = (INTN)(x1 + i * step);
+    if (i == 0) {
+      py[i] = (INTN)midY;
+    } else if (i == ARC_SEGS) {
+      px[i] = (INTN)x2;
+      py[i] = (INTN)midY;
+    } else {
+      UINT32 h = FastHash((UINT32)(frame * 101 + i * 31));
+      INTN jit = (INTN)(h % (maxJitter * 2 + 1)) - maxJitter;
+      // Parabolic arch: sin curve between 0 and PI
+      UINTN angle = (i * 32 / ARC_SEGS) & 63;
+      INTN arch = (INTN)SinU8(angle) * archBias / 255;
+      INTN y = (INTN)midY + arch + jit;
+      if (y < 4) y = 4;
+      if (y >= (INTN)maxY - 4) y = (INTN)maxY - 4;
+      py[i] = y;
     }
-    // Bottom arc — only rendered when brightBot > 0
-    if (brightBot > 0 && botY >= 2 && (UINTN)botY + thick + 4 < maxY) {
-      UiGfxFillRectRgb(px, (UINTN)botY - 2, 1, thick + 4, grB, ggB, 0);
-      UiGfxFillRectRgb(px, (UINTN)botY,     1, thick,     rB,  gB,  0);
-      if (brightBot > 180)
-        UiGfxFillRectRgb(px, (UINTN)botY, 1, 1, 255, 200, 0);
+  }
+
+  // 1. Soft wide electric-blue / cyan plasma aura
+  UINTN auraThick = (scale > 1) ? scale + 1 : 2;
+  for (UINTN i = 0; i < ARC_SEGS; i++) {
+    DrawGfxLine(px[i], py[i] - 1, px[i + 1], py[i + 1] - 1, auraThick, 0, 110, 230);
+    DrawGfxLine(px[i], py[i],     px[i + 1], py[i + 1],     auraThick, 0, 190, 255);
+  }
+
+  // 2. White-hot high-voltage core filament
+  for (UINTN i = 0; i < ARC_SEGS; i++) {
+    DrawGfxLine(px[i], py[i], px[i + 1], py[i + 1], 1, 255, 255, 255);
+  }
+
+  // 3. Forked branching sparks extending into the air
+  if ((surge & 7) < 5) {
+    UINTN forkIdx = 3 + (surge % (ARC_SEGS - 6));
+    INTN bx0 = px[forkIdx];
+    INTN by0 = py[forkIdx];
+    INTN bx1 = bx0 + (INTN)(scale * 8) - (INTN)((surge >> 4) % (scale * 16 + 1));
+    INTN by1 = by0 + ((surge & 2) ? 1 : -1) * (INTN)(scale * 7 + 5);
+    DrawGfxLine(bx0, by0, bx1, by1, 1, 120, 220, 255);
+  }
+
+  // 4. Secondary micro-arc on twin surge
+  if (isTwin && scale >= 2) {
+    INTN dOff = ((surge & 4) ? 1 : -1) * (INTN)(scale * 5);
+    for (UINTN i = 2; i < ARC_SEGS - 2; i++) {
+      UINT32 h2 = FastHash((UINT32)(frame * 53 + i * 47));
+      INTN jit2 = (INTN)(h2 % (scale * 6 + 1)) - (INTN)(scale * 3);
+      INTN yA = py[i] + dOff + jit2;
+      INTN yB = py[i + 1] + dOff + jit2;
+      DrawGfxLine(px[i], yA, px[i + 1], yB, 1, 140, 220, 255);
     }
   }
 }
@@ -237,14 +308,10 @@ static VOID DrawTwoBoltsWithArc(
   UINT8 glowL = ClampU8(60 + (UINTN)phaseL * 195 / 255);
   UINT8 glowR = ClampU8(60 + (UINTN)phaseR * 195 / 255);
 
-  // Arc pulses with chaotic energy
-  UINT8 phaseA = SinU8(frame * 16 + 16);
-  UINT8 arcCore = (UINT8)(((UINTN)phaseA * (UINTN)phaseA) / 255);
-
-  // Arc endpoints: inner edges of each bolt at crossbar level (y=13 on grid)
+  // Arc endpoints: inner edges of each bolt at crossbar level (y=15 on grid)
   UINTN arcX1 = leftBoltX  + boltW + scale;
   UINTN arcX2 = (rightBoltX > scale) ? rightBoltX - scale : rightBoltX;
-  UINTN arcY  = by + 13 * scale;           // crossbar level
+  UINTN arcY  = by + 15 * scale;           // crossbar level
   UINTN arcMaxY = by + boltH + 10;
 
   // Final colors: 
@@ -261,15 +328,10 @@ static VOID DrawTwoBoltsWithArc(
   UINT8 gR = glowR;
   UINT8 bR = coreR;
 
-  // Arc color
-  UINT8 rA = 255;
-  UINT8 gA = ClampU8(180 + (UINTN)arcCore * 75 / 255);
-  UINT8 bA = arcCore;
-
   // Draw order: glow -> arc -> bolts
   DrawBoltMirrorGlow(leftBoltX,  by, scale, rL, gL, bL);
   DrawBoltGlow      (rightBoltX, by, scale, rR, gR, bR);
-  DrawEllipticArc(frame, arcX1, arcX2, arcY, arcMaxY, scale, rA, gA, bA);
+  DrawJaggedElectricArc(frame, arcX1, arcX2, arcY, arcMaxY, scale);
   DrawBoltMirror(leftBoltX,  by, scale, rL, gL, bL);
   DrawBolt      (rightBoltX, by, scale, rR, gR, bR);
 }
@@ -295,7 +357,7 @@ static VOID DrawOscilloscope(UINTN frame, UINTN cy, UINTN amp, UINTN sw, UINTN m
 
   for (UINTN px = 0; px < sw; px++) {
     UINTN pos    = (px + scrollPx) % sw;
-    UINTN segIdx = (pos / period) % 3;   // % 3 chroni przy sw niebędącym wielokrotnością 3
+    UINTN segIdx = (pos / period) % 3;   // Keep the segment index valid when sw is not divisible by 3.
     UINTN posInP = pos % period;
 
     if (posInP < segW) {
@@ -393,15 +455,15 @@ VOID RunStartupAnimation(VOID)
   // Top 46% of screen is the animation canvas
   UINTN animH = SH * 46 / 100;
 
-  // Bolts: one at SW/4, one at 3*SW/4
-  UINTN boltScale = (SH >= 900) ? 5 : (SH >= 700) ? 4 : 3;
+  // Bolts & Title dynamic scaling for all resolutions (800p, 1080p, 1440p, 4K)
+  UINTN boltScale = (SH >= 1800) ? 8 : (SH >= 1200) ? 6 : (SH >= 900) ? 5 : (SH >= 700) ? 4 : 3;
   UINTN boltH     = (UINTN)BOLT_GRID_H * boltScale;
   UINTN boltY     = SH * 5 / 100;
   if (boltY < 10) boltY = 10;  // ensure glow halo never clips the top edge
 
   // Title: centred, below bolts — clamped to stay inside animH so that
   // UiClearAnimationArea() always erases the title before the voltage table.
-  UINTN titleScale = (SH >= 900) ? 5 : (SH >= 700) ? 4 : 3;
+  UINTN titleScale = boltScale;
   UINTN titleAdv   = GetTitleAdvance(titleScale);
   UINTN titleW     = TITLE_LEN * titleAdv;
   UINTN titleX     = (SW > titleW) ? (SW - titleW) / 2 : 0;
@@ -421,9 +483,10 @@ VOID RunStartupAnimation(VOID)
     waveY = animH - waveAmp - 10;
   }
 
-  // ── Animation loop ────────────────────────────────────────────────────────
+  // ── Animation loop (exact 60 FPS hardware-paced via TSC) ──────────────────
 
   for (UINTN frame = 0; frame < ANIM_FRAMES; frame++) {
+    UINT64 frameStart = ReadTsc();
 
     // Background: deep navy
     UiGfxFillRectRgb(0, 0, SW, animH, 0, 0, 10);
@@ -437,8 +500,13 @@ VOID RunStartupAnimation(VOID)
     // Title with electric-blue color wave
     DrawTitle(frame, titleX, titleY, titleScale);
 
-    // ~16 ms per frame
-    gBS->Stall(16000);
+    // Constant 60 FPS (~16.6 ms per frame) regardless of CPU/BIOS timing quirks
+    UINT64 elapsedNs = TicksToNanoSeconds(ReadTsc() - frameStart);
+    if (elapsedNs > 0 && elapsedNs < 16666666ULL) {
+      NanoStall(16666666ULL - elapsedNs);
+    } else if (elapsedNs == 0) {
+      gBS->Stall(16000);
+    }
   }
 
   // ── Final frozen frame ────────────────────────────────────────────────────
@@ -447,9 +515,8 @@ VOID RunStartupAnimation(VOID)
   DrawTwoBoltsWithArc(16, SW, boltY, boltH, boltScale, 255, 230, 0);
   DrawTitle(16, titleX, titleY, titleScale);
 
-  // Clear the animation zone and reposition the text cursor for normal output
-  UiClearAnimationArea();
-  UiGfxSetCursor(0, 0);
+  // Clear the entire screen cleanly and reposition cursor for text output
+  UiClearScreen();
 
   UiSetAttribute(EFI_LIGHTCYAN);
   UiPrint(L" v1.0.2");
@@ -507,25 +574,37 @@ VOID DrawProgressBar(IN UINTN ProgressPercentage)
   UINTN SW, SH;
   UiGfxGetDimensions(&SW, &SH);
 
-  UINTN barX = (SW > BAR_W) ? (SW - BAR_W) / 2 : 0;
-  UINTN barY = (SH > 100) ? SH - 80 : SH / 2;
+  UINTN barW = (SW >= 1800) ? 900 : (SW >= 1200) ? 750 : (SW >= 900) ? 600 : (SW >= 700) ? 500 : 360;
+  UINTN barH = (SH >= 1200) ? 28 : (SH >= 700) ? 22 : 16;
 
-  UINTN filled = (UINTN)BAR_W * ProgressPercentage / 100;
+  UINTN barX = (SW > barW) ? (SW - barW) / 2 : 0;
+  UINTN barY = (SH > 100) ? SH - (barH * 4) : SH / 2;
+
+  UINTN filled = barW * ProgressPercentage / 100;
 
   // Dark background track
-  UiGfxFillRectRgb(barX, barY, BAR_W, BAR_H, 22, 22, 32);
+  UiGfxFillRectRgb(barX, barY, barW, barH, 18, 20, 28);
 
-  // Filled portion: green (0%) -> yellow (50%) -> red (100%)
-  if (filled > 0) {
-    UINT8 r = ClampU8(ProgressPercentage * 2 + 20);
-    UINT8 g = ClampU8(230 - ProgressPercentage * 2);
-    UINT8 b = 0;
-    UiGfxFillRectRgb(barX, barY, filled, BAR_H, r, g, b);
+  // Smooth continuous gradient fill across each pixel column
+  for (UINTN px = 0; px < filled; px++) {
+    UINTN pct = px * 100 / barW;
+    UINT8 r = ClampU8(pct * 2 + 20);
+    UINT8 g = ClampU8(240 > (pct * 2) ? 240 - (pct * 2) : 20);
+    UINT8 b = ClampU8(pct < 50 ? (50 - pct) : 0);
+
+    // 1px highlight at top
+    UiGfxFillRectRgb(barX + px, barY, 1, 1, ClampU8(r + 40), ClampU8(g + 40), ClampU8(b + 40));
+    // Main fill
+    if (barH > 2) {
+      UiGfxFillRectRgb(barX + px, barY + 1, 1, barH - 2, r, g, b);
+    }
+    // 1px subtle shadow at bottom
+    UiGfxFillRectRgb(barX + px, barY + barH - 1, 1, 1, r / 2, g / 2, b / 2);
   }
 
-  // Thin border
-  UiGfxFillRectRgb(barX,              barY,             BAR_W, 1, 60, 60, 90);
-  UiGfxFillRectRgb(barX,              barY + BAR_H - 1, BAR_W, 1, 60, 60, 90);
-  UiGfxFillRectRgb(barX,              barY,             1, BAR_H, 60, 60, 90);
-  UiGfxFillRectRgb(barX + BAR_W - 1, barY,             1, BAR_H, 60, 60, 90);
+  // Polished glowing border
+  UiGfxFillRectRgb(barX,            barY,            barW, 1, 50, 70, 110);
+  UiGfxFillRectRgb(barX,            barY + barH - 1, barW, 1, 30, 40, 70);
+  UiGfxFillRectRgb(barX,            barY,            1, barH, 50, 70, 110);
+  UiGfxFillRectRgb(barX + barW - 1, barY,            1, barH, 50, 70, 110);
 }

@@ -5,6 +5,7 @@
 #include <Library/UefiBootServicesTableLib.h>     // gBS, gImageHandle
 #include <Library/BaseMemoryLib.h>                // SetMem/CopyMem standard
 #include <Protocol/MpService.h>
+#include <Library/MemoryAllocationLib.h>
 
 #include "Platform.h"
 #include "HwAccess.h"
@@ -66,9 +67,9 @@ EFI_STATUS InitializeUefiEnvironment(IN EFI_SYSTEM_TABLE* SystemTable)
     }
   }
 
-  if (gMpServices) {
-    gMpServices->WhoAmI(gMpServices, &gBootCpu);
-  }
+  if (EFI_ERROR(status) || !gMpServices) return EFI_UNSUPPORTED;
+  status = gMpServices->WhoAmI(gMpServices, &gBootCpu);
+  if (EFI_ERROR(status)) return status;
 
   InitializeTrace();
 
@@ -117,7 +118,9 @@ EFI_STATUS EFIAPI UefiMain(
   IN EFI_SYSTEM_TABLE* SystemTable
 )
 {
+  EFI_STATUS Status = EFI_SUCCESS;
   LoadAppSettings();
+  if (gDisableFirmwareWDT) SystemTable->BootServices->SetWatchdogTimer(0, 0, 0, NULL);
 
   if (!gAppQuietMode) {
     UiConsoleInit(SystemTable);
@@ -140,39 +143,54 @@ EFI_STATUS EFIAPI UefiMain(
 
   if (!gCpuDetected) {
     // Throw warning for UNKNOWN CPUs
-    if (!gAppQuietMode && !DisplayUnknownCpuWarning()) {
+    if (gAppQuietMode || !DisplayUnknownCpuWarning()) {
       ReleaseAppSettings();
       return EFI_ABORTED;
     }
   }
 
+  // Lunar Lake currently has no supported voltage programming path.
+  if (gCpuInfo.family == 6 && gCpuInfo.model == 189) {
+    if (!gAppQuietMode) UiPrint(L"Lunar Lake voltage programming is not supported.\n");
+    Status = EFI_UNSUPPORTED;
+    goto Cleanup;
+  }
+  if (!gIniFound) {
+    if (!gAppQuietMode) UiPrint(L"No usable UnderVolter.ini found; CPU settings were not changed.\n");
+    Status = EFI_NOT_FOUND;
+    goto Cleanup;
+  }
+
   // Set-up TSC timing
   // NOTE: not MP-proofed - multiple packages will use the same calibration
-  if (EFI_ERROR(InitializeTscVars())) {
+  Status = InitializeTscVars();
+  if (EFI_ERROR(Status)) {
     if (!gAppQuietMode) {
-      UiPrint(L"[ERROR] Unable to initialize timing using CPUID leaf 0x15\n");
+      UiPrint(L"[ERROR] Unable to initialize timing: %r\n", Status);
     }
+    goto Cleanup;
   }
 
   if (!gAppQuietMode) {
     RunStartupAnimation();
   }
 
-  InitializeUefiEnvironment(SystemTable);
-  StartupPlatformInit(SystemTable, &gPlatform);
+  Status = InitializeUefiEnvironment(SystemTable);
+  if (EFI_ERROR(Status)) goto Cleanup;
+  ProbeBclk();
+  Status = StartupPlatformInit(SystemTable, &gPlatform);
+  if (EFI_ERROR(Status)) goto Cleanup;
 
   if (!gAppQuietMode && CheckForEmergencyExit()) {
-    if (gEnableSaferAsm) {
-      RemoveAllInterruptOverrides();
-    }
-    ReleaseAppSettings();
-    return EFI_SUCCESS;
+    goto Cleanup;
   }
 
-  ApplyPolicy(SystemTable, gPlatform);
+  Status = ApplyPolicy(SystemTable, gPlatform);
+  if (EFI_ERROR(Status)) goto Cleanup;
 
   if (gSelfTestMaxRuns && !gAppQuietMode) {
-    RunPowerManagementSelfTest();
+    Status = RunPowerManagementSelfTest();
+    if (EFI_ERROR(Status)) goto Cleanup;
   }
 
   if (gEnableSaferAsm) {
@@ -186,19 +204,19 @@ EFI_STATUS EFIAPI UefiMain(
 
   // Show voltage domain table after programming — reflects actually applied values
   if (gPlatform && !gAppQuietMode) {
-    UiClearAnimationArea();
+    UiClearScreen();
     PrintPlatformSettings(gPlatform);
   }
 
   if (gAppDelaySeconds > 0) {
-    if (!gAppQuietMode) {
+    if (!gAppQuietMode && SystemTable->ConIn) {
       BOOLEAN aborted = FALSE;
       for (UINT32 i = gAppDelaySeconds; i > 0; i--) {
         UiAsciiPrint("\rTime to exit: %u s... (Press ANY KEY to exit) ", i);
         
         for (UINTN j = 0; j < 100; j++) {
-          EFI_STATUS Status = SystemTable->BootServices->CheckEvent(SystemTable->ConIn->WaitForKey);
-          if (!EFI_ERROR(Status)) {
+          EFI_STATUS KeyStatus = SystemTable->BootServices->CheckEvent(SystemTable->ConIn->WaitForKey);
+          if (!EFI_ERROR(KeyStatus)) {
             EFI_INPUT_KEY Key;
             SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &Key);
             aborted = TRUE;
@@ -210,10 +228,16 @@ EFI_STATUS EFIAPI UefiMain(
       }
       UiAsciiPrint("\r                                                        \r");
     } else {
-      SystemTable->BootServices->Stall(gAppDelaySeconds * 1000000);
+      SystemTable->BootServices->Stall((UINTN)gAppDelaySeconds * 1000000);
     }
   }
 
+Cleanup:
+  RemoveAllInterruptOverrides();
+  if (EFI_ERROR(Status) && !gAppQuietMode) UiPrint(L"UnderVolter stopped: %r\n", Status);
+  if (gPlatform) { FreePool(gPlatform); gPlatform = NULL; }
+  SetMem(gCorePtrs, sizeof(gCorePtrs), 0);
+  gNumCores = 0;
   ReleaseAppSettings();
-  return EFI_SUCCESS;
+  return Status;
 }

@@ -17,7 +17,7 @@ extern CPUINFO gCpuInfo;
 // the user presses ESC, aborting further programming.
 BOOLEAN CheckForEmergencyExit(VOID)
 {
-  if (gEmergencyExit) {
+  if (gEmergencyExit && gST->ConIn) {
 
     EFI_STATUS         Status;
     EFI_INPUT_KEY      Key;
@@ -34,7 +34,7 @@ BOOLEAN CheckForEmergencyExit(VOID)
         for (UINTN j = 0; j < 20; j++) {
             Status = gBS->CheckEvent(gST->ConIn->WaitForKey);
             if (!EFI_ERROR(Status)) {
-                gST->ConIn->ReadKeyStroke(gST->ConIn, &Key);
+                if (EFI_ERROR(gST->ConIn->ReadKeyStroke(gST->ConIn, &Key))) continue;
                 if (Key.ScanCode == SCAN_ESC) {      
                     UiAsciiPrint("\n Aborting.\n");
                     return TRUE;
@@ -55,6 +55,7 @@ BOOLEAN CheckForEmergencyExit(VOID)
 // on timeout or any other key (programming is aborted by the caller).
 BOOLEAN DisplayUnknownCpuWarning(VOID)
 {
+  if (!gST->ConIn) return FALSE;
   EFI_STATUS         Status;
   EFI_EVENT          TimerEvent;
   EFI_EVENT          WaitList[2];
@@ -87,8 +88,11 @@ BOOLEAN DisplayUnknownCpuWarning(VOID)
   Status = gBS->CreateEvent(
     EVT_TIMER, TPL_NOTIFY, NULL, NULL, &TimerEvent);
 
+  if (EFI_ERROR(Status)) return FALSE;
   Status = gBS->SetTimer(
     TimerEvent, TimerRelative, 300000000);
+
+  if (EFI_ERROR(Status)) { gBS->CloseEvent(TimerEvent); return FALSE; }
 
   WaitList[0] = gST->ConIn->WaitForKey;
   WaitList[1] = TimerEvent;
@@ -100,7 +104,8 @@ BOOLEAN DisplayUnknownCpuWarning(VOID)
   }
 
   gBS->CloseEvent(TimerEvent);
-  gST->ConIn->ReadKeyStroke(gST->ConIn, &Key);
+  if (EFI_ERROR(Status) || Index != 0) return FALSE;
+  if (EFI_ERROR(gST->ConIn->ReadKeyStroke(gST->ConIn, &Key))) return FALSE;
 
   if (Key.ScanCode == SCAN_F10) {
     UiAsciiPrint(

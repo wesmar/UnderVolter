@@ -93,3 +93,5 @@ extern VOLTCFGTEMPLATE vcfg_q_alderlake_client;     // ADL/RPL Client
 extern VOLTCFGTEMPLATE vcfg_q_meteorlake_client;    // MTL Client (tile arch)
 extern VOLTCFGTEMPLATE vcfg_q_arrowlake_client;     // ARL Client (tile arch, DLVR)
 extern VOLTCFGTEMPLATE vcfg_q_lunarlake_client;     // LNL Client (2-tile, DLVR, on-package LPDDR5X)
+
+VOID ProbeBclk(VOID);

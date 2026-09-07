@@ -1,14 +1,15 @@
 # UnderVolter Build Script
-# Builds x64 Release, copies to bin, includes UnderVolter.ini
+# Builds x64 Release directly into bin and removes intermediate files.
 
 $projectRoot  = $PSScriptRoot
 $binDir       = Join-Path $projectRoot "bin"
 $vsDir        = Join-Path $projectRoot ".vs"
 $slnPath      = Join-Path $projectRoot "UnderVolter.sln"
 $srcDir       = Join-Path $projectRoot "src"
-$outputDir    = Join-Path $projectRoot "x64\Release"
+$libDir       = Join-Path $projectRoot "lib"
+$includeDir   = Join-Path $projectRoot "include"
+$buildDir     = Join-Path $projectRoot ".build"
 $embedScript  = Join-Path $projectRoot "Signer\embed-cert.ps1"
-$signScript   = Join-Path $projectRoot "Signer\sign.ps1"
 
 # Future timestamp for static build signature
 $futureDate = [DateTime]"2030-01-01 00:00:00"
@@ -17,7 +18,42 @@ Write-Host "--- UnderVolter Build Script ---" -ForegroundColor Cyan
 Write-Host ""
 
 # ============================================================================
-# Step 0: Embed certificate into src/UnderVolterCert.h
+# Step 0a: Verify self-contained build dependencies
+# ============================================================================
+$requiredLibs = @(
+    "BaseDebugPrintErrorLevelLib.lib",
+    "BaseLib.lib",
+    "BasePrintLib.lib",
+    "BaseSynchronizationLib.lib",
+    "GlueLib.lib",
+    "UefiApplicationEntryPoint.lib",
+    "UefiBootServicesTableLib.lib",
+    "UefiDebugLibConOut.lib",
+    "UefiDevicePathLibDevicePathProtocol.lib",
+    "UefiFileHandleLib.lib",
+    "UefiHiiLib.lib",
+    "UefiHiiServicesLib.lib",
+    "UefiLib.lib",
+    "UefiMemoryAllocationLib.lib",
+    "UefiMemoryLib.lib",
+    "UefiRuntimeServicesTableLib.lib",
+    "UefiShellLib.lib",
+    "UefiSortLib.lib"
+)
+
+$missingDependencies = @($requiredLibs | Where-Object { -not (Test-Path -LiteralPath (Join-Path $libDir $_)) })
+if (-not (Test-Path -LiteralPath (Join-Path $includeDir "vshacks.h"))) {
+    $missingDependencies += "include\vshacks.h"
+}
+if ($missingDependencies.Count -gt 0) {
+    Write-Error ("Missing local build dependencies: " + ($missingDependencies -join ", "))
+    exit 1
+}
+Write-Host "  Local vshacks.h and lib/ dependencies are complete" -ForegroundColor Green
+Write-Host ""
+
+# ============================================================================
+# Step 0b: Embed certificate into src/UnderVolterCert.h
 # ============================================================================
 Write-Host "--- Embedding certificate ---" -ForegroundColor Cyan
 & powershell.exe -ExecutionPolicy Bypass -File $embedScript
@@ -37,17 +73,32 @@ if (-not (Test-Path $vswhere)) {
     exit 1
 }
 
-$vsPath = &$vswhere -latest -prerelease -requires Microsoft.Component.MSBuild -property installationPath
-if (-not $vsPath) {
-    Write-Error "Visual Studio Build Tools not found."
+$instances = & $vswhere -all -products * -prerelease -format json | ConvertFrom-Json
+$msbuild = $null
+$toolset = $null
+foreach ($instance in ($instances | Sort-Object { [version]$_.installationVersion } -Descending)) {
+    $candidateMsbuild = Join-Path $instance.installationPath "MSBuild\Current\Bin\MSBuild.exe"
+    $candidateToolset = Get-ChildItem -LiteralPath (Join-Path $instance.installationPath "VC\Tools\MSVC") -Directory -ErrorAction SilentlyContinue |
+        Sort-Object { [version]$_.Name } -Descending |
+        Where-Object {
+            (Test-Path -LiteralPath (Join-Path $_.FullName "bin\Hostx64\x64\ml64.exe")) -and
+            (Test-Path -LiteralPath (Join-Path $_.FullName "bin\Hostx64\x64\cl.exe"))
+        } | Select-Object -First 1
+    if ((Test-Path -LiteralPath $candidateMsbuild) -and $candidateToolset) {
+        $msbuild = $candidateMsbuild
+        $toolset = $candidateToolset.FullName
+        break
+    }
+}
+if (-not $msbuild) {
+    Write-Error "No Visual Studio installation with MSBuild, cl.exe, and ml64.exe for x64 was found."
     exit 1
 }
-
-$msbuild = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
 Write-Host "  MSBuild: $msbuild" -ForegroundColor Gray
+Write-Host "  MSVC:    $toolset" -ForegroundColor Gray
 
 # ============================================================================
-# Step 2: Clean bin and .vs directories
+# Step 2: Clean output and intermediate directories
 # ============================================================================
 Write-Host ""
 Write-Host "--- Cleaning build directories ---" -ForegroundColor Cyan
@@ -58,6 +109,20 @@ if (Test-Path $binDir) {
 }
 New-Item -ItemType Directory -Path $binDir -Force | Out-Null
 Write-Host "  Cleaned: bin" -ForegroundColor Gray
+
+if (Test-Path $buildDir) {
+    Remove-Item -LiteralPath $buildDir -Recurse -Force
+}
+Write-Host "  Cleaned: .build" -ForegroundColor Gray
+
+foreach ($legacyDir in @((Join-Path $projectRoot "x64"), (Join-Path $srcDir "x64"))) {
+    $resolvedLegacy = [IO.Path]::GetFullPath($legacyDir)
+    $resolvedRoot = [IO.Path]::GetFullPath($projectRoot).TrimEnd('\') + '\'
+    if ($resolvedLegacy.StartsWith($resolvedRoot, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $resolvedLegacy)) {
+        Remove-Item -LiteralPath $resolvedLegacy -Recurse -Force
+        Write-Host "  Removed legacy output: $resolvedLegacy" -ForegroundColor Gray
+    }
+}
 
 # Clean .vs directory (Visual Studio cache)
 if (Test-Path $vsDir) {
@@ -92,20 +157,19 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "  Build completed successfully" -ForegroundColor Green
 
 # ============================================================================
-# Step 4: Copy output to bin
+# Step 4: Verify output and add configuration
 # ============================================================================
 Write-Host ""
-Write-Host "--- Copying to bin ---" -ForegroundColor Cyan
+Write-Host "--- Finalizing bin ---" -ForegroundColor Cyan
 
-# Copy EFI binaries
+# Verify EFI binaries emitted directly by the projects.
 $efiNames = @("UnderVolter.efi", "Loader.efi")
 foreach ($efiName in $efiNames) {
-    $efiSource = Join-Path $outputDir $efiName
-    if (Test-Path $efiSource) {
-        Copy-Item -Path $efiSource -Destination $binDir -Force
-        Write-Host "  Copied: $efiName" -ForegroundColor Green
+    $efiOutput = Join-Path $binDir $efiName
+    if (Test-Path -LiteralPath $efiOutput) {
+        Write-Host "  Built: $efiName" -ForegroundColor Green
     } else {
-        Write-Host "  ERROR: $efiName not found in $outputDir" -ForegroundColor Red
+        Write-Host "  ERROR: $efiName was not emitted into $binDir" -ForegroundColor Red
         exit 1
     }
 }
@@ -156,7 +220,7 @@ if ($pfxFile -and $pwdFile) {
 
         # Import PFX into CurrentUser\My cert store so signtool can use it.
         # (signtool cannot use openssl PFX directly due to CryptoAPI compatibility.)
-        $null = certutil -f -p $pfxPassword -importpfx -user $pfxFile.FullName 2>&1
+        $null = certutil -silent -f -p $pfxPassword -importpfx -user $pfxFile.FullName 2>&1
         $pfxPassword = $null
 
         Write-Host "  Signing UnderVolter.efi..." -ForegroundColor Cyan
@@ -171,13 +235,6 @@ if ($pfxFile -and $pwdFile) {
             $item.LastWriteTime = $item.CreationTime = $item.LastAccessTime = $futureDate
             Write-Host "  Signed: UnderVolter.efi" -ForegroundColor Green
 
-            # Keep the build output tree in sync with the signed artifact.
-            # x64\Release\UnderVolter.efi is used by some local boot/debug flows.
-            $signedOutputCopy = Join-Path $outputDir "UnderVolter.efi"
-            Copy-Item -LiteralPath $efiToSign -Destination $signedOutputCopy -Force
-            $signedItem = Get-Item -LiteralPath $signedOutputCopy
-            $signedItem.LastWriteTime = $signedItem.CreationTime = $signedItem.LastAccessTime = $futureDate
-            Write-Host "  Updated signed copy: x64\\Release\\UnderVolter.efi" -ForegroundColor Green
         }
     }
 } else {
@@ -191,12 +248,13 @@ if ($pfxFile -and $pwdFile) {
 Write-Host ""
 Write-Host "--- Cleaning build output ---" -ForegroundColor Cyan
 
-if (Test-Path $outputDir) {
-    Get-ChildItem -Path $outputDir | Where-Object {
-        $_.Name -notlike "*.efi"
-    } | Remove-Item -Recurse -Force
-    Write-Host "  Cleaned: $outputDir" -ForegroundColor Gray
+if (Test-Path $buildDir) {
+    Remove-Item -LiteralPath $buildDir -Recurse -Force
+    Write-Host "  Removed: .build" -ForegroundColor Gray
 }
+
+Get-ChildItem -LiteralPath $binDir -File | Where-Object { $_.Extension -notin @(".efi", ".ini") } |
+    Remove-Item -Force
 
 # ============================================================================
 # Summary

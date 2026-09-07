@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Release|x64">
@@ -24,11 +24,11 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup Label="UserMacros">
-    <EDK_PATH>C:\Projekty\VisualUEFI\edk2</EDK_PATH>
+    <EDK_PATH Condition="'$(EDK_PATH)' == ''">C:\Projekty\VisualUEFI\edk2</EDK_PATH>
   </PropertyGroup>
   <PropertyGroup>
-    <IncludePath>$(EDK_PATH)\MdePkg\Include;$(EDK_PATH)\MdePkg\Include\X64;$(EDK_PATH)\ShellPkg\Include;$(EDK_PATH)\CryptoPkg\Include;$(EDK_PATH)\UefiCpuPkg\Include</IncludePath>
-    <LibraryPath>$(SolutionDir)lib</LibraryPath>
+    <IncludePath>$(MSBuildThisFileDirectory)..\include;$(EDK_PATH)\MdePkg\Include;$(EDK_PATH)\MdePkg\Include\X64;$(EDK_PATH)\ShellPkg\Include;$(EDK_PATH)\CryptoPkg\Include;$(EDK_PATH)\UefiCpuPkg\Include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(MSBuildThisFileDirectory)..\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemGroup>
     <BuildMacro Include="EDK_PATH">
@@ -38,25 +38,30 @@
   </ItemGroup>
   <PropertyGroup>
     <GenerateManifest />
-    <IntDir>$(SolutionDir)$(Platform)\$(Configuration)\obj\$(TargetName)\</IntDir>
-    <OutDir>$(SolutionDir)$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir).build\$(ProjectName)\</IntDir>
+    <OutDir>$(SolutionDir)bin\</OutDir>
     <TargetExt>.efi</TargetExt>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ItemDefinitionGroup>
     <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
       <PreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">_PCD_GET_MODE_32_PcdProgressCodeOsLoaderLoad=0x3058000;_PCD_GET_MODE_32_PcdProgressCodeOsLoaderStart=0x3058001;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <BufferSecurityCheck>false</BufferSecurityCheck>
+      <AdditionalOptions>/experimental:deterministic /Brepro %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
       <AdditionalDependencies>UefiApplicationEntryPoint.lib;UefiBootServicesTableLib.lib;UefiRuntimeServicesTableLib.lib;UefiMemoryAllocationLib.lib;UefiMemoryLib.lib;UefiDevicePathLibDevicePathProtocol.lib;UefiDebugLibConOut.lib;UefiLib.lib;UefiFileHandleLib.lib;UefiHiiServicesLib.lib;BaseLib.lib;BasePrintLib.lib;BaseDebugPrintErrorLevelLib.lib;BaseSynchronizationLib.lib;GlueLib.lib</AdditionalDependencies>
       <SubSystem>EFI Application</SubSystem>
       <EntryPointSymbol>EfiMain</EntryPointSymbol>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
       <DataExecutionPrevention>false</DataExecutionPrevention>
-      <AdditionalLibraryDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(MSBuildThisFileDirectory)..\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>/Brepro %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>

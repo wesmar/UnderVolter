@@ -1,180 +1,97 @@
-# UnderVolter - Release 04.2026
+UnderVolter - September 2026
+================================
 
-## PASSWORD: github.com
-### Extract downloaded archive with password: github.com
+Archive password: github.com
 
----
+CONTENTS
+--------
 
-## WHAT'S INSIDE
+UnderVolter.efi
+    Signed x64 UEFI application.
 
-UnderVolter-latest/
-|
-+-- UnderVolter.efi  [124K]  Main UEFI application (voltage/power MSR writes)
-+-- UnderVolter.ini  [20K]  Per-CPU configuration (Intel 2nd-15th gen, auto-selected by CPUID)
-+-- README.txt                   This guide
-|
-+-- other-tools/                 Supporting Tools (OPTIONAL)
-    |
-    +-- IFRExtractor.exe  [536K]  IFR/HII BIOS disassembler (CLI + GUI, C++17)
-    |                                  Extracts BIOS form structure and VarStore offsets
-    |                                  Use to find CFG Lock / OC Lock byte offsets for UnderVolter.ini
-    |
-    +-- Loader.efi        [36K]  Chainloading UEFI loader (Mode A deployment)
-    |                                  Copy as \EFI\BOOT\BOOTX64.EFI — runs UnderVolter.efi
-    |                                  then chainloads the original boot sequence automatically
-    |
-    +-- UEFITool.exe      [15M]  UEFITool NE Alpha 72 — UEFI firmware image parser
-    |                                  By Nikolaj Schlej / CodeRush + Vitaly Cheptsov / vit9696
-    |                                  Use to extract IFR data from firmware images
-    |
-    +-- phoenixtool273/             PhoenixTool 2.73 — BIOS disassembly tool by Andy
-        +-- PhoenixTool.exe  [2.1M]
-        +-- [support files]
+UnderVolter.ini
+    Dell XPS 15 7590 configuration used by the author. The CFG Lock and OC Lock
+    offsets remain 0x6ED and 0x789. The Coffee Lake voltage offsets remain
+    -180/-100/0/-40/-40 mV.
 
----
+README.txt
+    This file.
 
-## QUICK START
+other-tools\
+    Optional firmware-analysis utilities and Loader.efi. UnderVolter does not
+    require Loader.efi when it is started directly by firmware, OpenCore, or an
+    EFI Shell.
 
-### Windows — persistent installation (recommended):
+QUICK START
+-----------
 
-  1. Mount the EFI System Partition (ESP) from elevated Command Prompt:
-       mountvol X: /S
-     (X: is an example — use any free drive letter)
+1. Extract the archive with password: github.com
+2. Review UnderVolter.ini before using it on any machine other than the exact
+   XPS 15 7590 configuration for which its Setup-variable offsets were recorded.
+3. Put UnderVolter.efi and UnderVolter.ini in the same directory on a FAT32 EFI
+   System Partition or USB drive.
+4. Start UnderVolter.efi from an EFI Shell, a firmware boot entry, or OpenCore.
+5. Press ESC during the startup window to abort CPU programming.
 
-  2. Copy files to the ESP:
-       xcopy /Y UnderVolter.efi X:\EFI\BOOT
-       xcopy /Y UnderVolter.ini X:\EFI\BOOT
+The configuration file must be named UnderVolter.ini. Names such as
+UnderVolter_XPS.ini are not discovered automatically.
 
-  3. Add a UEFI boot entry pointing to \EFI\BOOT\UnderVolter.efi
-     via BIOS Setup (Boot > Add Boot Option).
-     UnderVolter will run before Windows on every boot.
-     See the animated demo at https://github.com/wesmar/UnderVolter
+FIRST BOOT ON THE XPS 15 7590
+-----------------------------
 
-  Alternatively — replace BOOTX64.EFI directly:
-       copy /Y UnderVolter.efi X:\EFI\BOOT\BOOTX64.EFI
-     Note: this replaces the default fallback boot file.
-     Do NOT do this if Secure Boot is enabled — leave BOOTX64.EFI alone
-     and use a named UEFI boot entry instead.
+The supplied INI enables two idempotent bootstrap stages:
 
-  4. Unmount: mountvol X: /D
+1. NVRAM Setup patching writes 0 to offsets 0x6ED and 0x789 only when either
+   byte differs, verifies the complete variable, and can perform one warm reset.
+2. Secure Boot SelfEnroll verifies the embedded root CA in db/KEK/PK, fills
+   missing entries when firmware permits it, and can perform one warm reset.
+3. On the next pass, both completed stages are no-ops and CPU settings are
+   applied normally.
 
-### First run / testing — EFI Shell:
-  1. Copy UnderVolter.efi and UnderVolter.ini to a FAT32 USB drive
-  2. Boot from EFI Shell (BIOS > Boot Override > EFI Shell)
-  3. Run: UnderVolter.efi
-  4. Press ESC within 2 seconds to abort if unstable
+If both stages are needed, seeing UnderVolter during two consecutive reboot
+passes is expected. It does not install a duplicate boot entry. Existing
+BootNext is preserved; if BootNext is absent, the current boot entry is used for
+the intentional bootstrap restart.
 
-### OpenCore:
-  Add UnderVolter.efi as a Driver or Tool entry in config.plist.
+SECURE BOOT
+-----------
 
----
+SelfEnroll installs the embedded root CA into db and KEK. It creates PK only
+when PK is absent and does not replace an existing Platform Key. Firmware policy
+must allow the writes. Every write is checked by reading the variable back.
+Rejected or unchanged enrollment does not cause an enrollment reboot.
 
-## UnderVolter.efi [124K]
+The release image is Authenticode-signed with the shared demonstration key in
+the public source repository. This makes the signing and SelfEnroll workflow
+reproducible, but the signature does not authenticate a unique publisher because
+anyone can use that key. Use your own root and signing key when that distinction
+matters. PFX and password files are never needed on the ESP.
 
-Native UEFI application for Intel CPU power management programming.
-Runs directly from firmware before any operating system loads.
+SUPPORTED PROCESSORS
+--------------------
 
-Supported Intel generations: 2nd (Sandy Bridge) through 15th (Arrow Lake)
-CPUID-based auto-selection of voltage domain layout and MSR addresses.
+Profiles cover Sandy Bridge through Arrow Lake where the required Intel MSR and
+OC mailbox paths are available. Lunar Lake is detected, but voltage programming
+is intentionally rejected because a supported hardware path has not been
+confirmed.
 
-Features:
-  - Voltage offset programming (P-Core, E-Core, Ring, Uncore, GT)
-  - Power limit configuration (PL1/PL2/PL3/PL4/PP0)
-  - Turbo ratio control
-  - V/F curve overrides
-  - ICC Max configuration per domain
-  - CFG Lock + OC Lock bypass via NVRAM Setup variable patching [SetupVar]
-  - Secure Boot SelfEnroll — embedded root CA, no external tools [SecureBoot]
-  - Emergency exit: 2-second ESC key window on startup
+VALIDATION
+----------
 
----
+The release workflow requires:
 
-## UnderVolter.ini [20K]
+- a clean Release/x64 build with warning level 4 and warnings treated as errors;
+- end-to-end verification of the EFI Authenticode signature against the root
+  certificate embedded in the image;
+- the QEMU/OVMF regression application to report 58 checks and zero failures;
+- a production-image LoadImage/StartImage test with the supplied INI.
 
-Configuration file — edit before deploying.
-Located next to UnderVolter.efi (same directory on ESP or USB).
+QEMU cannot validate real voltage stability, OEM MSR behavior, thermal margins,
+or platform-specific NVRAM policy. Validate those on the target machine.
 
-Key sections:
-  [General]        Enable = 1, TimeoutMs = 2000, LogLevel
-  [VoltageOffsets] Core = -80, Ring = -50, Uncore = -50, GT = 0, ...
-  [PowerLimits]    PL1 = 45000, PL2 = 65000, Enabled = 1, ...
-  [TurboRatios]    MaxRatio = 0 (0 = do not override)
-  [SetupVar]       NvramPatchEnabled = 0, Offset_0 = "0x3E:0x00", ...
-  [SecureBoot]     SelfEnroll = 0, TryDeployedMode = 0, BootToFirmwareUI = 0
+PROJECT
+-------
 
-Per-CPU architecture profiles are auto-selected by CPUID at runtime.
-Safe defaults are pre-configured — only adjust if you know your CPU's limits.
+https://github.com/wesmar/UnderVolter
 
----
-
-## IFRExtractor.exe [536K] - BIOS IFR/HII Disassembler
-
-Dual-mode tool (CLI and GUI) for extracting Internal Forms Representation
-from UEFI/BIOS firmware images and HII database exports.
-
-Use to find CFG Lock, OC Lock, and other hidden Setup variable byte offsets
-for use in the [SetupVar] section of UnderVolter.ini.
-
-Workflow:
-  1. Dump BIOS image (e.g. via flashrom or manufacturer utility)
-  2. Extract IFR section with UEFITool or PhoenixTool
-  3. Run IFRExtractor.exe on the extracted HII binary
-  4. Search output for "CFG Lock" or "Overclocking Lock" — note the VarOffset
-  5. Set that offset in UnderVolter.ini: Offset_0 = "0xXX:0x00"
-
-CLI: IFRExtractor.exe <input.bin> [output.txt]
-GUI: IFRExtractor.exe  (no arguments — opens GUI)
-
----
-
-## Loader.efi [36K] - Optional Chainloading UEFI Loader
-
-Loader.efi is completely optional. Most users do not need it.
-
-Use it only if you want to deploy UnderVolter by replacing BOOTX64.EFI
-AND still need to chainload the original boot sequence automatically.
-Placed as \EFI\BOOT\BOOTX64.EFI, it finds UnderVolter.efi in the same
-directory, runs it, then continues the normal BootOrder chain.
-
-Do NOT use Loader.efi if Secure Boot is enabled — leave BOOTX64.EFI
-untouched and add UnderVolter.efi as a separate named UEFI boot entry
-from BIOS Setup instead (see Quick Start above).
-
----
-
-## UEFITool NE Alpha 72 [15M]
-
-UEFI firmware image parser and editor.
-By Nikolaj Schlej (CodeRush) and Vitaly Cheptsov (vit9696).
-
-Use to open BIOS dump images and extract IFR/HII sections for IFRExtractor.
-
----
-
-## PhoenixTool 2.73 by Andy
-
-BIOS disassembly tool for Phoenix/AMI/Insyde firmware images.
-Extracts modules and IFR data from BIOS ROM files.
-
-Usage: PhoenixTool.exe <bios.rom>
-
----
-
-## CONTACT & SUPPORT
-
-  GitHub:   https://github.com/wesmar/UnderVolter
-  Email:    marek@wesolowski.eu.org
-
----
-
-## LEGAL DISCLAIMER
-
-This software is provided for educational and research purposes only.
-Users are responsible for compliance with applicable laws.
-CPU undervolting may void warranty and can cause system instability.
-The author assumes no liability for misuse or hardware damage.
-
----
-
-Release: 04.2026
-(c) WESMAR 2026
+Copyright (c) 2026 Marek Wesolowski (WESMAR)

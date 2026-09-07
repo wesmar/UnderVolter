@@ -39,6 +39,8 @@ typedef struct _IgniteContext
   UINTN CpuNumber;
   VOID* userParam;  
   EFI_AP_PROCEDURE userProc;
+  CPU_STATUS_PROCEDURE statusProc;
+  EFI_STATUS result;
 } IgniteContext;
 
 // EFI_AP_PROCEDURE shim: runs on each AP before the caller's procedure.
@@ -51,6 +53,7 @@ VOID EFIAPI ProcessorIgnite(VOID* params)
   IgniteContext* pic = (IgniteContext*)params;
 
   VOID* coreStructAddr = GetCpuDataBlock();
+  if (!coreStructAddr) { pic->result = EFI_NOT_FOUND; return; }
   VOID* oldGsBase = GetCpuGSBase();
 
   //
@@ -84,6 +87,7 @@ VOID EFIAPI ProcessorIgnite(VOID* params)
     pic->userProc(pic->userParam);
   }
 
+  if (pic->statusProc) pic->result = pic->statusProc(pic->userParam);
   SetCpuGSBase(oldGsBase);
 }
 
@@ -98,10 +102,11 @@ VOID EFIAPI ProcessorIgnite(VOID* params)
 EFI_STATUS EFIAPI RunOnPackageOrCore(
   const IN PLATFORM* Platform,
   const IN UINTN CpuNumber,
-  const IN EFI_AP_PROCEDURE proc,
+  const IN CPU_STATUS_PROCEDURE proc,
   IN VOID* param OPTIONAL)
 {
   EFI_STATUS status = EFI_SUCCESS;
+  if (!gMpServices || !Platform || CpuNumber >= gNumCores || !gCorePtrs[CpuNumber]) return EFI_INVALID_PARAMETER;
 
   if (gMpServices) {
     if (CpuNumber != Platform->BootProcessor) {
@@ -109,7 +114,7 @@ EFI_STATUS EFIAPI RunOnPackageOrCore(
       IgniteContext ctx = { 0 };
       
       ctx.userParam = param;
-      ctx.userProc = proc;
+      ctx.statusProc = proc;
       ctx.CpuNumber = CpuNumber;
 
       status = gMpServices->StartupThisAP(
@@ -127,7 +132,7 @@ EFI_STATUS EFIAPI RunOnPackageOrCore(
           "status code: 0x%x\n", CpuNumber, status);
       }
 
-      return status;
+      return EFI_ERROR(status) ? status : ctx.result;
     }
   }
 
@@ -139,10 +144,11 @@ EFI_STATUS EFIAPI RunOnPackageOrCore(
     IgniteContext ctx = { 0 };
 
     ctx.userParam = param;
-    ctx.userProc = proc;
+    ctx.statusProc = proc;
     ctx.CpuNumber = CpuNumber;
 
     ProcessorIgnite(&ctx);
+    status = ctx.result;
   }
   
 
@@ -166,75 +172,34 @@ EFI_STATUS EFIAPI RunOnAllProcessors(
   const BOOLEAN runConcurrent,                  // FALSE = serial AP execution
   IN VOID* param OPTIONAL)
 {
-  EFI_STATUS status = EFI_SUCCESS;
+  if (!proc || !gMpServices) return EFI_INVALID_PARAMETER;
   EFI_EVENT mpEvent = NULL;
-  UINTN eventIdx = 0;
-
-  ///
-  /// Start other processors with our workload 
-  ///
-
-  if (gMpServices) {
-
-    if (runConcurrent) {
-      status = gBS->CreateEvent(
-        EVT_NOTIFY_SIGNAL,
-        TPL_NOTIFY,
-        EfiEventEmptyFunction,
-        NULL,
-        &mpEvent);
-    }
-
-    if (EFI_ERROR(status)) {
-      UiPrint(L"[ERROR] Unable to create EFI_EVENT, code: 0x%x\n", status);
-      mpEvent = NULL;
-    }
-    else {
-
-      IgniteContext ctx = { 0 };
-
-      ctx.CpuNumber = 0xFFFFFFFF;
-      ctx.userParam = param;
-      ctx.userProc = proc;
-
-      status = gMpServices->StartupAllAPs(
-        gMpServices,
-        ProcessorIgnite,
-        (runConcurrent) ? FALSE : TRUE,
-        (runConcurrent) ? &mpEvent : NULL,
-        0,
-        &ctx,
-        NULL
-      );
-
-      if (EFI_ERROR(status)) {
-        UiPrint(L"[ERROR] Unable to execute on AP CPUs, code: 0x%x\n", status);
-        gBS->CloseEvent(mpEvent);
-        mpEvent = NULL;
-      }
-    }
+  IgniteContext ctx = { 0 };
+  ctx.userParam = param;
+  ctx.userProc = proc;
+  EFI_STATUS status = EFI_SUCCESS;
+  if (runConcurrent) {
+    // A plain signalable event can be waited on; EVT_NOTIFY_SIGNAL cannot.
+    status = gBS->CreateEvent(0, TPL_APPLICATION, NULL, NULL, &mpEvent);
+    if (EFI_ERROR(status)) return status;
   }
-
-  ///
-  /// Execute workload on this CPU (BSP)
-  ///
-  
+  status = gMpServices->StartupAllAPs(gMpServices, ProcessorIgnite,
+    !runConcurrent, mpEvent, 0, &ctx, NULL);
+  // EFI_NOT_STARTED is normal for a BSP-only machine.
+  if (status == EFI_NOT_STARTED) {
+    if (mpEvent) gBS->CloseEvent(mpEvent);
+    mpEvent = NULL;
+    status = EFI_SUCCESS;
+  }
+  if (EFI_ERROR(status)) {
+    if (mpEvent) gBS->CloseEvent(mpEvent);
+    return status;
+  }
   proc(param);
-  
-  ///
-  /// Wait until work is done
-  ///
-
-  if ((gMpServices) && (mpEvent) && (!EFI_ERROR(status))) {
-
-    //
-    // Wait for APs to finish
-
-    if (runConcurrent) {
-      gBS->WaitForEvent(1, &mpEvent, &eventIdx);
-      gBS->CloseEvent(mpEvent);
-    }    
+  if (mpEvent) {
+    UINTN eventIdx;
+    status = gBS->WaitForEvent(1, &mpEvent, &eventIdx);
+    gBS->CloseEvent(mpEvent);
   }
-
   return status;
 }

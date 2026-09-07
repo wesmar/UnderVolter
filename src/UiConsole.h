@@ -8,6 +8,7 @@ BOOLEAN UiConsoleInit(IN EFI_SYSTEM_TABLE* SystemTable);
 UINTN   UiPrint(IN CONST CHAR16* Format, ...);
 UINTN   UiAsciiPrint(IN CONST CHAR8* Format, ...);
 VOID    UiSetAttribute(IN UINTN Attribute);
+VOID    UiClearScreen(VOID);
 
 // Direct framebuffer drawing API
 BOOLEAN UiGfxIsReady(VOID);

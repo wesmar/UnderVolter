@@ -7,3 +7,11 @@ data/*.7z
 # Internal release/build scripts — not for public repo
 *.sh
 release-now.md
+release/
+dist/
+# QEMU runtime
+.qemu*/
+
+# VS build output
+x64/
+.build/

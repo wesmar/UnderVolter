@@ -14,6 +14,8 @@
 #include "Config.h"
 #include "CpuData.h"
 #include "UiConsole.h"
+#include "IniHelpers.h"
+#include <Library/BaseMemoryLib.h>
 
 UINT8 gPostProgrammingOcLock = 1;
 UINT8 gEmergencyExit = 1;
@@ -25,8 +27,10 @@ UINT8 gPrintVFPoints_PostProgram = 1;
 
 extern EFI_HANDLE gImageHandle;
 
-static CHAR8*   gIniData   = NULL;
+static CHAR8*   gIniData = NULL;
 static BOOLEAN  gIniLoaded = FALSE;
+static EFI_HANDLE gIniDevice = NULL;
+EFI_HANDLE GetIniDeviceHandle(VOID) { return gIniDevice; }
 
 CONST CHAR8* GetIniDataPtr(VOID) { return gIniData; }
 
@@ -75,17 +79,28 @@ static BOOLEAN StriEqualsAscii(CONST CHAR8* a, CONST CHAR8* b) {
   return (StrniCmpAscii(a, b, la) == 0);
 }
 
-// Parse a decimal integer (with optional leading sign) from an ASCII string.
-static INT64 ParseInt(CONST CHAR8* str) {
-  INT64 result = 0;
-  BOOLEAN neg = FALSE;
+// Parse a bounded decimal value; callers reject malformed and overflowing values.
+static BOOLEAN TryParseInt(CONST CHAR8* str, INT64* out) {
   while (*str == ' ' || *str == '\t') str++;
-  if (*str == '-') { neg = TRUE; str++; }
+  BOOLEAN neg = (*str == '-');
+  if (*str == '-' || *str == '+') str++;
+  if (*str < '0' || *str > '9') return FALSE;
+  UINT64 value = 0;
   while (*str >= '0' && *str <= '9') {
-    result = result * 10 + (*str - '0');
-    str++;
+    UINT32 digit = (UINT32)(*str++ - '0');
+    if (value > ((UINT64)MAX_INT64 - digit) / 10) return FALSE;
+    value = value * 10 + digit;
   }
-  return neg ? -result : result;
+  while (*str == ' ' || *str == '\t') str++;
+  if (*str && *str != '\r' && *str != '\n' && *str != ';' && *str != '#' && *str != ':') return FALSE;
+  *out = neg ? -(INT64)value : (INT64)value;
+  return TRUE;
+}
+
+static INT64 ParseInt(CONST CHAR8* str) {
+  INT64 value = 0;
+  TryParseInt(str, &value);
+  return value;
 }
 
 // Locate the value string for Key inside [Section] in an INI buffer.
@@ -94,7 +109,6 @@ static INT64 ParseInt(CONST CHAR8* str) {
 static CHAR8* IniFindValue(CHAR8* IniData, CONST CHAR8* Section, CONST CHAR8* Key) {
   CHAR8* p = IniData;
   BOOLEAN inSection = FALSE;
-  UINTN secLen = StrLenAscii(Section);
   UINTN keyLen = StrLenAscii(Key);
   
   while (*p) {
@@ -108,7 +122,7 @@ static CHAR8* IniFindValue(CHAR8* IniData, CONST CHAR8* Section, CONST CHAR8* Ke
     
     if (*p == '[') {
       p++;
-      if (StrnCmpAscii(p, Section, secLen) == 0 && p[secLen] == ']') {
+      if (IniSectionMatch(p, Section)) {
         inSection = TRUE;
       } else {
         inSection = FALSE;
@@ -118,7 +132,7 @@ static CHAR8* IniFindValue(CHAR8* IniData, CONST CHAR8* Section, CONST CHAR8* Ke
     }
     
     if (inSection) {
-      if (StrnCmpAscii(p, Key, keyLen) == 0) {
+      if (StrniCmpAscii(p, Key, keyLen) == 0) {
         CHAR8* k = p + keyLen;
         while (*k == ' ' || *k == '\t') k++;
         if (*k == '=') {
@@ -136,8 +150,9 @@ static CHAR8* IniFindValue(CHAR8* IniData, CONST CHAR8* Section, CONST CHAR8* Ke
 
 static UINT32 IniGetInt(CHAR8* IniData, CONST CHAR8* Section, CONST CHAR8* Key, UINT32 DefaultValue) {
   CHAR8* val = IniFindValue(IniData, Section, Key);
-  if (val) {
-      return (UINT32)ParseInt(val);
+  INT64 value;
+  if (val && TryParseInt(val, &value) && value >= 0 && value <= MAX_UINT32) {
+      return (UINT32)value;
   }
   return DefaultValue;
 }
@@ -145,15 +160,17 @@ static UINT32 IniGetInt(CHAR8* IniData, CONST CHAR8* Section, CONST CHAR8* Key, 
 
 static BOOLEAN IniTryGetUInt(CHAR8* IniData, CONST CHAR8* Section, CONST CHAR8* Key, UINT32* OutValue) {
   CHAR8* val = IniFindValue(IniData, Section, Key);
-  if (!val) return FALSE;
-  *OutValue = (UINT32)ParseInt(val);
+  INT64 value;
+  if (!val || !TryParseInt(val, &value) || value < 0 || value > MAX_UINT32) return FALSE;
+  *OutValue = (UINT32)value;
   return TRUE;
 }
 
 static BOOLEAN IniTryGetInt(CHAR8* IniData, CONST CHAR8* Section, CONST CHAR8* Key, INT32* OutValue) {
   CHAR8* val = IniFindValue(IniData, Section, Key);
-  if (!val) return FALSE;
-  *OutValue = (INT32)ParseInt(val);
+  INT64 value;
+  if (!val || !TryParseInt(val, &value) || value < MIN_INT32 || value > MAX_INT32) return FALSE;
+  *OutValue = (INT32)value;
   return TRUE;
 }
 
@@ -183,7 +200,7 @@ static BOOLEAN FindProfileSection(CHAR8* IniData, CONST CHAR8* ArchName, CHAR8* 
         secName[i++] = *p++;
       }
       secName[i] = '\0';
-      inSection = TRUE;
+      inSection = (*p == ']');
       while (*p && *p != '\n') p++;
       continue;
     }
@@ -203,12 +220,13 @@ static BOOLEAN FindProfileSection(CHAR8* IniData, CONST CHAR8* ArchName, CHAR8* 
 
           CHAR8 cleanArch[64];
           UINTN j = 0;
-          while (*k && *k != '\r' && *k != '\n' && j < 63) {
+          while (*k && *k != '\r' && *k != '\n' && *k != ';' && *k != '#' && j < 63) {
             if (*k != '"' && *k != '\'') {
               cleanArch[j++] = *k;
             }
             k++;
           }
+          while (j && (cleanArch[j-1] == ' ' || cleanArch[j-1] == '\t')) j--;
           cleanArch[j] = '\0';
 
           if (StriEqualsAscii(cleanArch, ArchName)) {
@@ -228,53 +246,48 @@ static BOOLEAN FindProfileSection(CHAR8* IniData, CONST CHAR8* ArchName, CHAR8* 
 }
 
 // Derive the expected INI path by replacing the loaded EFI's filename with
-// "UnderVolter.ini" in the same directory.  Falls back to manual device-path
-// node parsing when ConvertDevicePathToText is unavailable.
+// "UnderVolter.ini" in the same directory. Device-path
+// nodes are concatenated directly; display text is not a filesystem path.
 static CHAR16* GetIniPathFromLoadedImage(EFI_LOADED_IMAGE_PROTOCOL *LoadedImage) {
   EFI_DEVICE_PATH_PROTOCOL *Dp = (EFI_DEVICE_PATH_PROTOCOL *)LoadedImage->FilePath;
   if (Dp == NULL) return NULL;
 
-  // Try to use library for full path conversion if available
-  CHAR16* FullPath = ConvertDevicePathToText(Dp, FALSE, FALSE);
-  if (FullPath == NULL) {
-    // Manual fallback parsing in case protocol is missing or fails
-    // Handle multi-node file paths by concatenating them
-    UINTN TotalLen = 0;
-    EFI_DEVICE_PATH_PROTOCOL *Node = Dp;
-    while (!IsDevicePathEnd(Node)) {
-      if (DevicePathType(Node) == MEDIA_DEVICE_PATH && DevicePathSubType(Node) == MEDIA_FILEPATH_DP) {
-        TotalLen += (DevicePathNodeLength(Node) - 4) / 2;
-      }
-      Node = NextDevicePathNode(Node);
+  CHAR16* FullPath = NULL;
+  // Handle multi-node file paths by concatenating them
+  UINTN TotalLen = 0;
+  EFI_DEVICE_PATH_PROTOCOL *Node = Dp;
+  while (!IsDevicePathEnd(Node)) {
+    if (DevicePathType(Node) == MEDIA_DEVICE_PATH && DevicePathSubType(Node) == MEDIA_FILEPATH_DP) {
+      TotalLen += (DevicePathNodeLength(Node) - 4) / 2;
     }
-    
-    if (TotalLen == 0) return NULL;
-    
-    EFI_STATUS Status = gBS->AllocatePool(EfiBootServicesData, (TotalLen + 32) * sizeof(CHAR16), (VOID**)&FullPath);
-    if (EFI_ERROR(Status) || !FullPath) return NULL;
-    
-    UINTN CurrentPos = 0;
-    Node = Dp;
-    while (!IsDevicePathEnd(Node)) {
-      if (DevicePathType(Node) == MEDIA_DEVICE_PATH && DevicePathSubType(Node) == MEDIA_FILEPATH_DP) {
-        FILEPATH_DEVICE_PATH *Fp = (FILEPATH_DEVICE_PATH *)Node;
-        UINTN NodeCharCount = (DevicePathNodeLength(Node) - 4) / 2;
-        for (UINTN i = 0; i < NodeCharCount; i++) {
-          if (Fp->PathName[i] == L'\0') break;
-          FullPath[CurrentPos++] = Fp->PathName[i];
-        }
-      }
-      Node = NextDevicePathNode(Node);
-    }
-    FullPath[CurrentPos] = L'\0';
+    Node = NextDevicePathNode(Node);
   }
 
+  if (TotalLen == 0) return NULL;
+
+  EFI_STATUS Status = gBS->AllocatePool(EfiBootServicesData, (TotalLen + 32) * sizeof(CHAR16), (VOID**)&FullPath);
+  if (EFI_ERROR(Status) || !FullPath) return NULL;
+
+  UINTN CurrentPos = 0;
+  Node = Dp;
+  while (!IsDevicePathEnd(Node)) {
+    if (DevicePathType(Node) == MEDIA_DEVICE_PATH && DevicePathSubType(Node) == MEDIA_FILEPATH_DP) {
+      FILEPATH_DEVICE_PATH *Fp = (FILEPATH_DEVICE_PATH *)Node;
+      UINTN NodeCharCount = (DevicePathNodeLength(Node) - 4) / 2;
+      for (UINTN i = 0; i < NodeCharCount; i++) {
+        if (Fp->PathName[i] == L'\0') break;
+        FullPath[CurrentPos++] = Fp->PathName[i];
+      }
+    }
+    Node = NextDevicePathNode(Node);
+  }
+  FullPath[CurrentPos] = L'\0';
   // Find last backslash to swap filename
   UINTN PathLen = 0;
   while (FullPath[PathLen]) PathLen++;
 
   INTN LastSlash = (INTN)PathLen - 1;
-  while (LastSlash >= 0 && FullPath[LastSlash] != L'\\') {
+  while (LastSlash >= 0 && FullPath[LastSlash] != L'\\' && FullPath[LastSlash] != L'/') {
     LastSlash--;
   }
 
@@ -285,7 +298,7 @@ static CHAR16* GetIniPathFromLoadedImage(EFI_LOADED_IMAGE_PROTOCOL *LoadedImage)
   CONST CHAR16* IniName = L"UnderVolter.ini";
   UINTN IniNameLen = 15;
   
-  EFI_STATUS Status = gBS->AllocatePool(EfiBootServicesData, (InsertPos + IniNameLen + 1) * sizeof(CHAR16), (VOID**)&NewPath);
+  Status = gBS->AllocatePool(EfiBootServicesData, (InsertPos + IniNameLen + 1) * sizeof(CHAR16), (VOID**)&NewPath);
   if (!EFI_ERROR(Status) && NewPath) {
     for (UINTN i = 0; i < InsertPos; i++) NewPath[i] = FullPath[i];
     for (UINTN i = 0; i < IniNameLen; i++) NewPath[InsertPos + i] = IniName[i];
@@ -357,6 +370,7 @@ static EFI_STATUS ReadIniFile(CHAR8** OutData, UINTN* OutSize) {
                                         (VOID**)&Fs)) &&
         !EFI_ERROR(Fs->OpenVolume(Fs, &Root))) {
       if (TryOpenIniOnRoot(Root, DynamicPath, &File)) {
+        gIniDevice = LoadedImage->DeviceHandle;
         goto got_file;
       }
       Root->Close(Root);
@@ -390,6 +404,7 @@ static EFI_STATUS ReadIniFile(CHAR8** OutData, UINTN* OutSize) {
         }
         if (TryOpenIniOnRoot(Rt, DynamicPath, &File)) {
           Root = Rt;
+          gIniDevice = HandleBuffer[hi];
           gBS->FreePool(HandleBuffer);
           goto got_file;
         }
@@ -422,6 +437,13 @@ got_file:
     return EFI_DEVICE_ERROR;
   }
 
+  if ((FileInfo->Attribute & EFI_FILE_DIRECTORY) || FileInfo->FileSize == 0 ||
+      FileInfo->FileSize > 1024 * 1024) {
+    gBS->FreePool(FileInfo);
+    File->Close(File);
+    Root->Close(Root);
+    return EFI_BAD_BUFFER_SIZE;
+  }
   UINTN FileSize = (UINTN)FileInfo->FileSize;
   gBS->FreePool(FileInfo);
 
@@ -435,7 +457,8 @@ got_file:
 
   BufferSize = FileSize;
   Status = File->Read(File, &BufferSize, Buffer);
-  if (EFI_ERROR(Status)) {
+  if (EFI_ERROR(Status) || BufferSize != FileSize) {
+    if (!EFI_ERROR(Status)) Status = EFI_DEVICE_ERROR;
     gBS->FreePool(Buffer);
     File->Close(File);
     Root->Close(Root);
@@ -443,6 +466,20 @@ got_file:
   }
 
   Buffer[FileSize] = '\0';
+  // UTF-8 BOM is common in Windows editors. Reject UTF-16 and embedded NULs.
+  if (FileSize >= 3 && (UINT8)Buffer[0] == 0xef &&
+      (UINT8)Buffer[1] == 0xbb && (UINT8)Buffer[2] == 0xbf) {
+    CopyMem(Buffer, Buffer + 3, FileSize - 3 + 1);
+    FileSize -= 3;
+  }
+  for (UINTN bi = 0; bi < FileSize; bi++) {
+    if (Buffer[bi] == '\0' || (UINT8)Buffer[bi] == 0xff || (UINT8)Buffer[bi] == 0xfe) {
+      gBS->FreePool(Buffer);
+      File->Close(File);
+      Root->Close(Root);
+      return EFI_UNSUPPORTED;
+    }
+  }
   *OutData = Buffer;
   *OutSize = FileSize;
 
@@ -480,7 +517,7 @@ static VOID BuildKey(CHAR8* Buffer, CONST CHAR8* Prefix, UINTN Index, CONST CHAR
 // Converts MHz → kHz → ratio using gBCLK_bsp (BCLK in kHz), then scans for
 // a fused ratio match.  Returns -1 if no point matches.
 static INTN FindVfPointIndexByFreq(DOMAIN* dom, INT64 freqMHz) {
-  if (!dom || freqMHz <= 0 || gBCLK_bsp == 0) return -1;
+  if (!dom || freqMHz <= 0 || freqMHz > 25500 || gBCLK_bsp == 0) return -1;
 
   INT64 freqKhz = freqMHz * 1000;
   INT64 ratio64 = (freqKhz + ((INT64)gBCLK_bsp / 2)) / (INT64)gBCLK_bsp;
@@ -518,8 +555,13 @@ static VOID SetDomainSettings(CHAR8* IniData, CONST CHAR8* Sec, PACKAGE* pk, UIN
   key[i] = '\0';
   
   if (IniTryGetUInt(IniData, Sec, key, &uval)) {
-    pk->Program_IccMax[domIdx] = 1;
-    pk->planes[domIdx].IccMax = (UINT16)uval;
+    if (uval != 0) {
+      pk->Program_IccMax[domIdx] = 1;
+      pk->planes[domIdx].IccMax = (UINT16)MIN(uval, (1u << gActiveCpuData->IccMaxBits) - 1);
+    } else {
+      pk->Program_IccMax[domIdx] = 0;
+      pk->planes[domIdx].IccMax = 0;
+    }
   }
 
   // OffsetVolts
@@ -528,9 +570,10 @@ static VOID SetDomainSettings(CHAR8* IniData, CONST CHAR8* Sec, PACKAGE* pk, UIN
   p2 = DomName; while (*p2) key[i++] = *p2++;
   key[i] = '\0';
   
-  if (IniTryGetInt(IniData, Sec, key, &sval)) {
+  if (IniTryGetInt(IniData, Sec, key, &sval) && sval >= -250 && sval <= 250) {
     pk->planes[domIdx].VoltMode = V_IPOLATIVE;
     pk->planes[domIdx].OffsetVolts = (INT16)sval;
+    anyOverrides = TRUE;
   }
 
   // TargetVolts
@@ -540,7 +583,10 @@ static VOID SetDomainSettings(CHAR8* IniData, CONST CHAR8* Sec, PACKAGE* pk, UIN
   key[i] = '\0';
   
   if (IniTryGetUInt(IniData, Sec, key, &uval)) {
-    pk->planes[domIdx].TargetVolts = (UINT16)uval;
+    if ((uval == 0 || (uval >= 250 && uval <= 1500))) {
+      pk->planes[domIdx].TargetVolts = (UINT16)uval;
+      anyOverrides = TRUE;
+    }
   }
 
   // Program_VF_Points
@@ -551,10 +597,8 @@ static VOID SetDomainSettings(CHAR8* IniData, CONST CHAR8* Sec, PACKAGE* pk, UIN
   
   if (IniTryGetUInt(IniData, Sec, key, &uval)) {
     vfKeyPresent = TRUE;
-    pk->Program_VF_Points[domIdx] = (UINT8)uval;
-    if (pk->Program_VF_Points[domIdx]) {
-      anyOverrides = TRUE;
-    }
+    pk->Program_VF_Points[domIdx] = (uval == 1);
+
   }
 
   // VF Points
@@ -571,13 +615,14 @@ static VOID SetDomainSettings(CHAR8* IniData, CONST CHAR8* Sec, PACKAGE* pk, UIN
       vfPointFound = TRUE;
       // Key format: "VF_Point_N_DOMNAME = Freq_MHz:Offset_mV"
       INT64 freq = ParseInt(val);
-      while (*val && *val != ':') val++;
+      while (*val && *val != ':' && *val != '\r' && *val != '\n' && *val != ';' && *val != '#') val++;
       if (*val == ':') {
         val++;
-        INT64 off = ParseInt(val);
+        INT64 off;
+        if (!TryParseInt(val, &off)) continue;
 
         INTN idx = FindVfPointIndexByFreq(&pk->planes[domIdx], freq);
-        if (idx >= 0) {
+        if (idx >= 0 && off >= -250 && off <= 250) {
           pk->planes[domIdx].vfPoint[idx].VOffset = (INT16)off;
           vfPointApplied = TRUE;
         } else {
@@ -594,7 +639,6 @@ static VOID SetDomainSettings(CHAR8* IniData, CONST CHAR8* Sec, PACKAGE* pk, UIN
   }
 
   if (vfPointApplied) {
-    anyOverrides = TRUE;
     if (!vfKeyPresent) {
       pk->Program_VF_Points[domIdx] = 1;
     } else if ((pk->Program_VF_Points[domIdx] != 1) && !gAppQuietMode) {
@@ -606,9 +650,6 @@ static VOID SetDomainSettings(CHAR8* IniData, CONST CHAR8* Sec, PACKAGE* pk, UIN
       DomName);
   }
 
-  if (pk->planes[domIdx].OffsetVolts != 0 || pk->planes[domIdx].TargetVolts != 0) {
-    anyOverrides = TRUE;
-  }
 
   pk->Program_VF_Overrides[domIdx] = anyOverrides ? 1 : 0;
 }
@@ -648,36 +689,31 @@ VOID LoadAppSettings(VOID)
     return;
   }
 
-  gAppDelaySeconds = (UINT32)IniGetInt(gIniData, "Global", "DelaySeconds", 0);
+  gAppDelaySeconds = MIN(IniGetInt(gIniData, "Global", "DelaySeconds", 0), 3600);
   gAppQuietMode = (BOOLEAN)IniGetInt(gIniData, "Global", "QuietMode", 0);
 
   CHAR8* val = NULL;
 
   val = IniFindValue(gIniData, "Global", "PostProgrammingOcLock");
-  if (val) gPostProgrammingOcLock = (UINT8)ParseInt(val);
+  if (val) gPostProgrammingOcLock = (ParseInt(val) == 1);
 
   val = IniFindValue(gIniData, "Global", "EmergencyExit");
-  if (val) gEmergencyExit = (UINT8)ParseInt(val);
+  if (val) gEmergencyExit = (ParseInt(val) == 1);
 
   val = IniFindValue(gIniData, "Global", "EnableSaferAsm");
-  if (val) gEnableSaferAsm = (UINT8)ParseInt(val);
+  if (val) gEnableSaferAsm = (ParseInt(val) == 1);
 
   val = IniFindValue(gIniData, "Global", "DisableFirmwareWDT");
-  if (val) {
-    gDisableFirmwareWDT = (UINT8)ParseInt(val);
-  } else {
-    val = IniFindValue(gIniData, "Global", "DisableFirmwareWDT");
-    if (val) gDisableFirmwareWDT = (UINT8)ParseInt(val);
-  }
+  if (val) gDisableFirmwareWDT = (ParseInt(val) == 1);
 
   val = IniFindValue(gIniData, "Global", "SelfTestMaxRuns");
-  if (val) gSelfTestMaxRuns = (UINT64)ParseInt(val);
+  if (val) { INT64 runs; if (TryParseInt(val, &runs) && runs >= 0) gSelfTestMaxRuns = (UINT64)runs; }
 
   val = IniFindValue(gIniData, "Global", "PrintPackageConfig");
-  if (val) gPrintPackageConfig = (UINT8)ParseInt(val);
+  if (val) gPrintPackageConfig = (ParseInt(val) == 1);
 
   val = IniFindValue(gIniData, "Global", "PrintVFPoints_PostProgram");
-  if (val) gPrintVFPoints_PostProgram = (UINT8)ParseInt(val);
+  if (val) gPrintVFPoints_PostProgram = (ParseInt(val) == 1);
 }
 
 VOID ReleaseAppSettings(VOID)
@@ -685,6 +721,7 @@ VOID ReleaseAppSettings(VOID)
   if (gIniData) {
     gBS->FreePool(gIniData);
   }
+  gIniDevice = NULL;
   gIniData   = NULL;
   gIniLoaded = FALSE;
   gIniFound = FALSE;
@@ -716,9 +753,6 @@ VOID ApplyComputerOwnersPolicy(IN PLATFORM* sys)
     pk->EnableRaceToHalt = 0;
     
     for(UINT8 d = 0; d < MAX_DOMAINS; d++) {
-        pk->planes[d].VoltMode = V_IPOLATIVE;
-        pk->planes[d].TargetVolts = 0;
-        pk->planes[d].OffsetVolts = 0;
         pk->Program_IccMax[d] = 0;
         pk->Program_VF_Points[d] = 0;
         pk->Program_VF_Overrides[d] = 0;
@@ -819,9 +853,5 @@ VOID ApplyComputerOwnersPolicy(IN PLATFORM* sys)
       pk->ClampMsrPP0 = (UINT8)IniGetInt(IniData, Sec, "ClampMsrPP0", 0);
       pk->LockMsrPP0 = (UINT8)IniGetInt(IniData, Sec, "LockMsrPP0", 0);
     }
-  }
-
-  if (IniData) {
-    gBS->FreePool(IniData);
   }
 }

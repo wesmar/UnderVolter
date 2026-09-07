@@ -24,8 +24,8 @@
 
 // Fill *ci by executing the relevant CPUID leaves on the calling logical CPU.
 // Extended family/model correction (Intel SDM Vol.2 Table 3-8):
-//   model  |= extended_model  << 4  (always for family 6 and 15)
-//   family |= extended_family << 8  (only for family 15)
+//   model  |= extended_model << 4   (only for family 6 and 15)
+//   family += extended_family       (only for family 15)
 // Hybrid detection: CPUID 0x7 EDX bit15 = 1 means the package has mixed core
 // types.  CPUID 0x1A EAX[31:24] == 0x20 identifies an E-Core (Gracemont).
 void GetCpuInfo(CPUINFO* ci)
@@ -42,7 +42,8 @@ void GetCpuInfo(CPUINFO* ci)
   // Leaves 0x80000002-4 return 16 bytes of brand string each (48 bytes total)
   AsmCpuidRegisters(0x80000002, venstr);
   AsmCpuidRegisters(0x80000003, venstr+4);
-  AsmCpuidRegisters(0x80000004, venstr+12);
+  AsmCpuidRegisters(0x80000004, venstr+8);
+  ci->venString[sizeof(ci->venString) - 1] = '\0';
 
   ///////////////////
   // Vendor String //
@@ -57,6 +58,7 @@ void GetCpuInfo(CPUINFO* ci)
   brandstr[0] = regs[CPUID_EBX];
   brandstr[1] = regs[CPUID_EDX];
   brandstr[2] = regs[CPUID_ECX];
+  ci->brandString[12] = '\0';
  
   AsmCpuidRegisters(0x01, regs);
 
@@ -66,8 +68,10 @@ void GetCpuInfo(CPUINFO* ci)
   ci->model =    (UINT32)(regs[CPUID_EAX] & 0x000000F0) >> 4;
 
   if ((ci->family == 0xF) || (ci->family == 0x6)) {
-    ci->model  |= (UINT32)((regs[CPUID_EAX] & 0x0000F0000) >> 12);
-    ci->family |= (UINT32)((regs[CPUID_EAX] & 0x00FF00000) >> 16);
+    ci->model  |= (UINT32)((regs[CPUID_EAX] & 0x000F0000) >> 12);
+  }
+  if (ci->family == 0xF) {
+    ci->family += (UINT32)((regs[CPUID_EAX] & 0x0FF00000) >> 20);
   }
   
   ///////////////////////////////////

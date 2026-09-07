@@ -43,7 +43,7 @@ EFI_STATUS EFIAPI IAPERF_ProbeDomainVF(
 EFI_STATUS EFIAPI IAPERF_ProgramDomainVF(IN const UINT8 domIdx,
   IN OUT DOMAIN* dom, 
   IN const UINT8 programVfPoints,
-  IN const UINT8 programIccMax);
+  IN const UINT8 programIccMax, IN const UINT8 programLegacy);
 
 /*******************************************************************************
  *

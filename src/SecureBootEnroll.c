@@ -60,29 +60,16 @@ static EFI_GUID gSbeGlobalVarGuid = {
     { 0xAA, 0x0D, 0x00, 0xE0, 0x98, 0x03, 0x2B, 0x8C }
 };
 
-// {C1C41626-504C-4092-ACA9-41F936934328}  EFI_CERT_SHA256_GUID (hash db entries)
-static EFI_GUID gSbeCertSha256Guid = {
-    0xC1C41626, 0x504C, 0x4092,
-    { 0xAC, 0xA9, 0x41, 0xF9, 0x36, 0x93, 0x43, 0x28 }
-};
-
 // {A5C059A1-94E4-4AA7-87B5-AB155C2BF072}  EFI_CERT_X509_GUID (X.509 cert in db/KEK/PK)
 static EFI_GUID gSbeCertX509Guid = {
     0xA5C059A1, 0x94E4, 0x4AA7,
     { 0x87, 0xB5, 0xAB, 0x15, 0x5C, 0x2B, 0xF0, 0x72 }
 };
 
-/* // {4A6E5B1C-8F3D-4E92-A715-3C8DF21E6B04}  UnderVolter owner GUID
-// Identifies UnderVolter's signature entries in db/KEK/PK; visible in KeyTool.
+// UnderVolter signature owner (metadata, not a trust credential).
 static EFI_GUID gSbeOwnerGuid = {
     0x4A6E5B1C, 0x8F3D, 0x4E92,
     { 0xA7, 0x15, 0x3C, 0x8D, 0xF2, 0x1E, 0x6B, 0x04 }
-}; */
-
-// Standard Microsoft GUID for third-party UEFI signatures in db
-static EFI_GUID gSbeOwnerGuid = {
-    0x77fa9abd, 0x0359, 0x4d32,
-    { 0xbd, 0x60, 0x28, 0xf4, 0xe7, 0x8f, 0x78, 0x4b }
 };
 
 // {D719B2CB-3D3A-4596-A3BC-DAD00E67656F}  Image Security Database (db/dbx)
@@ -306,50 +293,110 @@ static EFI_STATUS SbeReadFile(
 
 // ─── Single .auth variable enroll ────────────────────────────────────────────
 
-static VOID EnrollOneVar(
-    IN EFI_BOOT_SERVICES*    BS,
-    IN EFI_RUNTIME_SERVICES* RT,
-    IN EFI_HANDLE            DeviceHandle,
-    IN CONST CHAR16*         KeyDir,
-    IN CONST CHAR16*         FileName,
-    IN CONST CHAR16*         VarName,
-    IN EFI_GUID*             VarGuid,
-    IN UINT32                Attrs,
-    IN BOOLEAN               QuietMode
+// Reject malformed signature lists before doing pointer arithmetic.
+static BOOLEAN SbeValidLists(CONST UINT8* Data, UINTN Size) {
+    if (!Size) return FALSE;
+    while (Size) {
+        if (Size < sizeof(SBE_SIG_LIST)) return FALSE;
+        CONST SBE_SIG_LIST* List = (CONST SBE_SIG_LIST*)Data;
+        UINTN ListSize = List->SignatureListSize;
+        if (ListSize < sizeof(*List) || ListSize > Size ||
+            List->SignatureHeaderSize > ListSize - sizeof(*List) ||
+            List->SignatureSize <= sizeof(EFI_GUID)) return FALSE;
+        UINTN EntriesSize = ListSize - sizeof(*List) - List->SignatureHeaderSize;
+        if (!EntriesSize || EntriesSize % List->SignatureSize) return FALSE;
+        Data += ListSize;
+        Size -= ListSize;
+    }
+    return TRUE;
+}
+
+// Every requested entry must already be stored; list grouping may differ.
+static BOOLEAN SbeContainsLists(CONST UINT8* Stored, UINTN StoredSize,
+                                CONST UINT8* Wanted, UINTN WantedSize) {
+    if (!SbeValidLists(Stored, StoredSize) || !SbeValidLists(Wanted, WantedSize)) return FALSE;
+    for (UINTN wi = 0; wi < WantedSize;) {
+        CONST SBE_SIG_LIST* W = (CONST SBE_SIG_LIST*)(Wanted + wi);
+        for (UINTN we = sizeof(*W) + W->SignatureHeaderSize; we < W->SignatureListSize; we += W->SignatureSize) {
+            BOOLEAN Found = FALSE;
+            for (UINTN si = 0; si < StoredSize && !Found;) {
+                CONST SBE_SIG_LIST* S = (CONST SBE_SIG_LIST*)(Stored + si);
+                if (CompareMem(&S->SignatureType, &W->SignatureType, sizeof(EFI_GUID)) == 0 &&
+                    S->SignatureSize == W->SignatureSize && S->SignatureHeaderSize == W->SignatureHeaderSize &&
+                    CompareMem((CONST UINT8*)S + sizeof(*S), (CONST UINT8*)W + sizeof(*W), W->SignatureHeaderSize) == 0) {
+                    for (UINTN se = sizeof(*S) + S->SignatureHeaderSize; se < S->SignatureListSize; se += S->SignatureSize) {
+                        if (!CompareMem((CONST UINT8*)S + se, (CONST UINT8*)W + we, W->SignatureSize)) { Found = TRUE; break; }
+                    }
+                }
+                si += S->SignatureListSize;
+            }
+            if (!Found) return FALSE;
+        }
+        wi += W->SignatureListSize;
+    }
+    return TRUE;
+}
+
+static EFI_STATUS SbePayloadPresent(EFI_RUNTIME_SERVICES* RT, CONST CHAR16* Name,
+                                    EFI_GUID* Guid, CONST UINT8* Payload, UINTN PayloadSize,
+                                    BOOLEAN* Present) {
+    *Present = FALSE;
+    UINTN Size = 0;
+    EFI_STATUS Status = RT->GetVariable((CHAR16*)Name, Guid, NULL, &Size, NULL);
+    if (Status == EFI_NOT_FOUND) return EFI_SUCCESS;
+    if (Status != EFI_BUFFER_TOO_SMALL) return EFI_ERROR(Status) ? Status : EFI_COMPROMISED_DATA;
+    UINT8* Data = AllocatePool(Size);
+    if (!Data) return EFI_OUT_OF_RESOURCES;
+    Status = RT->GetVariable((CHAR16*)Name, Guid, NULL, &Size, Data);
+    if (!EFI_ERROR(Status)) {
+        if (!SbeValidLists(Data, Size)) Status = EFI_COMPROMISED_DATA;
+        else *Present = SbeContainsLists(Data, Size, Payload, PayloadSize);
+    }
+    FreePool(Data);
+    return Status;
+}
+
+static EFI_STATUS EnrollOneVar(
+    EFI_BOOT_SERVICES* BS, EFI_RUNTIME_SERVICES* RT, EFI_HANDLE DeviceHandle,
+    CONST CHAR16* KeyDir, CONST CHAR16* FileName, CONST CHAR16* VarName,
+    EFI_GUID* VarGuid, UINT32 Attrs, BOOLEAN QuietMode, BOOLEAN* Changed
 ) {
     CHAR16* FullPath = SbeBuildPath(KeyDir, FileName);
-    if (!FullPath) {
-        if (!QuietMode) UiPrint(L"[SBE]   %s: AllocatePool failed\n", VarName);
-        return;
-    }
-
+    if (!FullPath) return EFI_OUT_OF_RESOURCES;
     EFI_FILE_PROTOCOL* File = NULL;
     EFI_STATUS Status = SbeOpenFile(BS, DeviceHandle, FullPath, &File);
     FreePool(FullPath);
-
-    if (EFI_ERROR(Status)) {
-        if (!QuietMode) UiPrint(L"[SBE]   %-6s  not found (0x%x) — skipped\n", VarName, Status);
-        return;
-    }
-
-    VOID*  Buf  = NULL;
-    UINTN  Size = 0;
+    if (EFI_ERROR(Status)) return Status;
+    VOID* Buf = NULL;
+    UINTN Size = 0;
     Status = SbeReadFile(File, &Buf, &Size);
     File->Close(File);
+    if (EFI_ERROR(Status)) return Status;
 
-    if (EFI_ERROR(Status)) {
-        if (!QuietMode) UiPrint(L"[SBE]   %-6s  read error (0x%x) — skipped\n", VarName, Status);
-        return;
+    if (Size < sizeof(SBE_AUTH2_HEADER)) { Status = EFI_COMPROMISED_DATA; goto Done; }
+    SBE_AUTH2_HEADER* Auth = Buf;
+    if (Auth->dwLength < sizeof(*Auth) - sizeof(EFI_TIME) ||
+        Auth->dwLength > Size - sizeof(EFI_TIME) || Auth->wRevision != 0x0200 ||
+        Auth->wCertificateType != 0x0ef1 || CompareMem(&Auth->CertType, &gSbePkcs7Guid, sizeof(EFI_GUID))) {
+        Status = EFI_COMPROMISED_DATA; goto Done;
     }
-
-    if (!QuietMode) UiPrint(L"[SBE]   %-6s  %u bytes ... ", VarName, (UINT32)Size);
+    UINTN Offset = sizeof(EFI_TIME) + Auth->dwLength;
+    UINT8* Payload = (UINT8*)Buf + Offset;
+    UINTN PayloadSize = Size - Offset;
+    // This path enrolls keys; empty/deletion payloads are not enrollments.
+    if (!SbeValidLists(Payload, PayloadSize)) { Status = EFI_COMPROMISED_DATA; goto Done; }
+    BOOLEAN Present = FALSE;
+    Status = SbePayloadPresent(RT, VarName, VarGuid, Payload, PayloadSize, &Present);
+    if (EFI_ERROR(Status) || Present) goto Done;
     Status = RT->SetVariable((CHAR16*)VarName, VarGuid, Attrs, Size, Buf);
+    if (EFI_ERROR(Status)) goto Done;
+    Status = SbePayloadPresent(RT, VarName, VarGuid, Payload, PayloadSize, &Present);
+    if (!EFI_ERROR(Status) && !Present) Status = EFI_DEVICE_ERROR;
+    if (!EFI_ERROR(Status)) *Changed = TRUE;
+Done:
+    if (!QuietMode) UiPrint(L"[SBE] %s: %r\n", VarName, Status);
     FreePool(Buf);
-
-    if (!QuietMode) {
-        if (EFI_ERROR(Status)) UiPrint(L"FAILED (0x%x)\n", Status);
-        else                   UiPrint(L"OK\n");
-    }
+    return Status;
 }
 
 // ─── SelfEnroll helpers ───────────────────────────────────────────────────────
@@ -381,19 +428,19 @@ static BOOLEAN SbeCertInVar(
     if (!Buf) return FALSE;
 
     s = RT->GetVariable((CHAR16*)VarName, VarGuid, &Attrs, &Size, Buf);
-    if (EFI_ERROR(s)) { FreePool(Buf); return FALSE; }
+    if (EFI_ERROR(s) || !SbeValidLists(Buf, Size)) { FreePool(Buf); return FALSE; }
 
     BOOLEAN Found = FALSE;
     UINT8*  p     = Buf;
     UINT8*  End   = Buf + Size;
 
-    while (!Found && p + sizeof(SBE_SIG_LIST) <= End) {
+    while (!Found && (UINTN)(End - p) >= sizeof(SBE_SIG_LIST)) {
         SBE_SIG_LIST* List = (SBE_SIG_LIST*)p;
 
         if (List->SignatureListSize < sizeof(SBE_SIG_LIST) ||
             p + List->SignatureListSize > End) break;
 
-        // X.509 lists have exactly one entry; SignatureSize = sizeof(EFI_GUID) + cert_size.
+        // X.509 lists may contain multiple entries; SignatureSize = sizeof(EFI_GUID) + cert_size.
         UINTN ExpSigSize = sizeof(EFI_GUID) + UV_CERT_DER_SIZE;
         if (SbeGuidEqual(&List->SignatureType, &gSbeCertX509Guid) &&
             List->SignatureSize == (UINT32)ExpSigSize) {
@@ -440,9 +487,16 @@ static BOOLEAN SbeWriteCertToVar(
     UINT8* Buf = AllocateZeroPool(TotalSize);
     if (!Buf) return FALSE;
 
-    // AUTH2 header — TimeStamp stays zero (AllocateZeroPool); no time constraint.
-    // In Setup Mode the firmware does not verify the empty PKCS#7 signature.
+    // Use a valid UTC timestamp for replacement writes (PK).
     SBE_AUTH2_HEADER* Auth = (SBE_AUTH2_HEADER*)Buf;
+    if (EFI_ERROR(RT->GetTime(&Auth->TimeStamp, NULL))) {
+        FreePool(Buf);
+        return FALSE;
+    }
+    Auth->TimeStamp.Pad1 = Auth->TimeStamp.Pad2 = 0;
+    Auth->TimeStamp.Nanosecond = 0;
+    Auth->TimeStamp.TimeZone = 0;
+    Auth->TimeStamp.Daylight = 0;
     Auth->dwLength          = (UINT32)(sizeof(SBE_AUTH2_HEADER) - sizeof(EFI_TIME));
     Auth->wRevision         = 0x0200;
     Auth->wCertificateType  = 0x0EF1;  // WIN_CERT_TYPE_EFI_GUID
@@ -463,13 +517,8 @@ static BOOLEAN SbeWriteCertToVar(
 
     if (EFI_ERROR(s)) return FALSE;
 
-    // Verify: confirm cert is present in the variable after the write (fail-closed).
-    // Firmware strips the AUTH2 header on storage; GetVariable returns raw SigList.
-    // PK is not readable after User Mode is entered — skip verify for PK.
-    if (Attrs & EFI_VARIABLE_APPEND_WRITE) {
-        return SbeCertInVar(RT, VarName, VarGuid);
-    }
-    return TRUE;  // PK write: trust non-error return; Setup Mode just ended
+    // PK, KEK and db remain readable after enrollment.
+    return SbeCertInVar(RT, VarName, VarGuid);
 }
 
 // ─── SetupMode check ─────────────────────────────────────────────────────────
@@ -507,6 +556,10 @@ static EFI_STATUS SbeTryDeployedMode(IN EFI_RUNTIME_SERVICES* RT) {
 // Set EFI_OS_INDICATIONS_BOOT_TO_FW_UI so the next warm reset enters the
 // firmware/BIOS setup UI (the same bit Windows sets on Shift+Restart → UEFI).
 static VOID SbeSetBootToFwUI(IN EFI_RUNTIME_SERVICES* RT) {
+    UINT64 Supported = 0;
+    UINTN SupportedSize = sizeof(Supported);
+    if (EFI_ERROR(RT->GetVariable(L"OsIndicationsSupported", &gSbeGlobalVarGuid, NULL,
+        &SupportedSize, &Supported)) || !(Supported & 1)) return;
     UINT64 OsInd = 0;
     UINTN  Size  = sizeof(OsInd);
     UINT32 Attrs = EFI_VARIABLE_NON_VOLATILE |
@@ -525,6 +578,9 @@ static VOID SbeSetBootToFwUI(IN EFI_RUNTIME_SERVICES* RT) {
 // that treat a warm reset as a "boot failed" event and skip to the next entry.
 // Best-effort; any failure is silent.
 static VOID SbeSetBootNextToCurrent(IN EFI_RUNTIME_SERVICES* RT) {
+    UINT16 next = 0;
+    UINTN nextSize = sizeof(next);
+    if (RT->GetVariable(L"BootNext", &gSbeGlobalVarGuid, NULL, &nextSize, &next) != EFI_NOT_FOUND) return;
     UINT16 cur  = 0;
     UINTN  size = sizeof(cur);
     EFI_STATUS s = RT->GetVariable(L"BootCurrent", &gSbeGlobalVarGuid,
@@ -577,7 +633,7 @@ static BOOLEAN SbeDoReboot(
     IN EFI_SYSTEM_TABLE*     ST,
     IN CONST SBE_CONFIG*     Cfg
 ) {
-    if (!gAppQuietMode) {
+    if (!gAppQuietMode && ST->ConIn) {
         if (Cfg->BootToFirmwareUI) {
             if (SbeAskBootToFwUI(BS, ST, Cfg->BootToFirmwareUITimeout)) {
                 UiPrint(L"[SBE] Rebooting to BIOS/firmware UI...\n");
@@ -636,7 +692,8 @@ VOID EnrollSecureBootKeys(
                 UiPrint(L"[SBE] SelfEnroll: no certificate embedded.\n"
                         L"[SBE]   Run: .\\Signer\\sign.ps1 -Create  then  .\\build.ps1\n");
 
-        } else if (SbeCertInVar(RT, L"db", &gSbeImageSecurityDb)) {
+        } else if (SbeCertInVar(RT, L"db", &gSbeImageSecurityDb) &&
+                   SbeCertInVar(RT, L"KEK", &gSbeGlobalVarGuid) && !SbeIsSetupMode(RT)) {
             // Already enrolled (cert found in db) — no action, no reboot.
             if (!gAppQuietMode)
                 UiPrint(L"[SBE] SelfEnroll: certificate already enrolled — no action needed.\n");
@@ -654,9 +711,25 @@ VOID EnrollSecureBootKeys(
             // Write order: db → KEK → PK.
             // db/KEK: APPEND_WRITE preserves existing Microsoft CA entries.
             // PK: REPLACE (only one PK allowed); exits Setup Mode after write.
-            BOOLEAN dbOk  = SbeWriteCertToVar(RT, L"db",  &gSbeImageSecurityDb, SBE_ATTR_APPEND);
-            BOOLEAN kekOk = SbeWriteCertToVar(RT, L"KEK", &gSbeGlobalVarGuid,   SBE_ATTR_APPEND);
-            BOOLEAN pkOk  = SbeWriteCertToVar(RT, L"PK",  &gSbeGlobalVarGuid,   SBE_ATTR_BASE);
+            BOOLEAN dbOk = SbeCertInVar(RT, L"db", &gSbeImageSecurityDb);
+            BOOLEAN kekOk = SbeCertInVar(RT, L"KEK", &gSbeGlobalVarGuid);
+            BOOLEAN changed = FALSE;
+            if (!dbOk) {
+                dbOk = SbeWriteCertToVar(RT, L"db", &gSbeImageSecurityDb, SBE_ATTR_APPEND);
+                changed = dbOk;
+            }
+            if (dbOk && !kekOk) {
+                kekOk = SbeWriteCertToVar(RT, L"KEK", &gSbeGlobalVarGuid, SBE_ATTR_APPEND);
+                changed |= kekOk;
+            }
+            BOOLEAN pkOk = SbeCertInVar(RT, L"PK", &gSbeGlobalVarGuid);
+            // Keep an existing platform owner's key. Never seal partial enrollment.
+            UINTN pkSize = 0;
+            EFI_STATUS pkStatus = RT->GetVariable(L"PK", &gSbeGlobalVarGuid, NULL, &pkSize, NULL);
+            if (dbOk && kekOk && pkStatus == EFI_NOT_FOUND) {
+                pkOk = SbeWriteCertToVar(RT, L"PK", &gSbeGlobalVarGuid, SBE_ATTR_BASE);
+                changed |= pkOk;
+            }
 
             if (!gAppQuietMode) {
                 UiPrint(L"[SBE]   db:  %s\n", dbOk  ? L"OK" : L"FAILED");
@@ -668,7 +741,7 @@ VOID EnrollSecureBootKeys(
                 if (pkOk) {
                     UiPrint(L"[SBE]   PK:  OK\n");
                 } else {
-                    UiPrint(L"[SBE]   PK:  not replaced (Microsoft default PK active)\n");
+                    UiPrint(L"[SBE]   PK:  not enrolled or existing owner key retained\n");
                 }
             }
 
@@ -683,14 +756,14 @@ VOID EnrollSecureBootKeys(
                 // Try Audit→Deployed transition via standard UEFI variable.
                 // Do this BEFORE printing the summary so the status is visible.
                 EFI_STATUS deployedSt = EFI_NOT_STARTED;
-                if (Cfg.TryDeployedMode)
+                if (Cfg.TryDeployedMode && !SbeIsSetupMode(RT))
                     deployedSt = SbeTryDeployedMode(RT);
 
                 if (!gAppQuietMode) {
                     if (pkOk) {
-                        UiPrint(L"[SBE] SelfEnroll: all keys enrolled. Secure Boot active after reboot.\n");
+                        UiPrint(L"[SBE] SelfEnroll: all keys enrolled. Check SecureBoot state after reboot.\n");
                     } else {
-                        UiPrint(L"[SBE] SelfEnroll: db and KEK enrolled. Microsoft PK retained.\n");
+                        UiPrint(L"[SBE] SelfEnroll: db and KEK enrolled. PK was not changed.\n");
                     }
                     UiPrint(L"[SBE]   Future UnderVolter.efi signed with the leaf cert will be trusted.\n");
 
@@ -707,9 +780,9 @@ VOID EnrollSecureBootKeys(
                     }
                 }
 
-                if (!Cfg.SelfEnrollReboot) {
+                if (!Cfg.SelfEnrollReboot || !changed) {
                     if (!gAppQuietMode)
-                        UiPrint(L"[SBE] SelfEnrollReboot = 0 — reboot manually to activate Secure Boot.\n");
+                        UiPrint(L"[SBE] No automatic reboot requested or no verified key change.\n");
                 } else {
                     SbeDoReboot(BS, RT, SystemTable, &Cfg);
                 }
@@ -729,7 +802,8 @@ VOID EnrollSecureBootKeys(
             UiPrint(L"[SBE] Cannot resolve LoadedImage protocol (0x%x)\n", Status);
         return;
     }
-    EFI_HANDLE DeviceHandle = LoadedImage->DeviceHandle;
+    EFI_HANDLE DeviceHandle = GetIniDeviceHandle();
+    if (!DeviceHandle) DeviceHandle = LoadedImage->DeviceHandle;
 
     BOOLEAN InSetupMode = SbeIsSetupMode(RT);
 
@@ -741,33 +815,23 @@ VOID EnrollSecureBootKeys(
         UiPrint(L"[SBE] KeyDir: %s\n", Cfg.KeyDir);
     }
 
-    // Enroll in spec order: dbx → db → KEK → PK
+    // Stop on the first failure; PK must not seal an incomplete enrollment.
+    BOOLEAN Changed = FALSE;
+    Status = EFI_SUCCESS;
     if (Cfg.EnrollDBX)
-        EnrollOneVar(BS, RT, DeviceHandle, Cfg.KeyDir,
-            L"dbx.auth", L"dbx", &gSbeImageSecurityDb,
-            SBE_ATTR_APPEND, gAppQuietMode);
-
-    if (Cfg.EnrollDB)
-        EnrollOneVar(BS, RT, DeviceHandle, Cfg.KeyDir,
-            L"db.auth", L"db", &gSbeImageSecurityDb,
-            SBE_ATTR_APPEND, gAppQuietMode);
-
-    if (Cfg.EnrollKEK)
-        EnrollOneVar(BS, RT, DeviceHandle, Cfg.KeyDir,
-            L"KEK.auth", L"KEK", &gSbeGlobalVarGuid,
-            SBE_ATTR_APPEND, gAppQuietMode);
-
-    if (Cfg.EnrollPK)
-        EnrollOneVar(BS, RT, DeviceHandle, Cfg.KeyDir,
-            L"PK.auth", L"PK", &gSbeGlobalVarGuid,
-            SBE_ATTR_BASE, gAppQuietMode);  // no APPEND for PK — replaces
-
-    if (!gAppQuietMode)
-        UiPrint(L"[SBE] Enrollment complete.\n");
-
-    if (!Cfg.RebootAfter) {
-        if (!gAppQuietMode)
-            UiPrint(L"[SBE] RebootAfterEnroll = 0 — reboot manually to activate Secure Boot.\n");
+        Status = EnrollOneVar(BS, RT, DeviceHandle, Cfg.KeyDir, L"dbx.auth", L"dbx",
+            &gSbeImageSecurityDb, SBE_ATTR_APPEND, gAppQuietMode, &Changed);
+    if (!EFI_ERROR(Status) && Cfg.EnrollDB)
+        Status = EnrollOneVar(BS, RT, DeviceHandle, Cfg.KeyDir, L"db.auth", L"db",
+            &gSbeImageSecurityDb, SBE_ATTR_APPEND, gAppQuietMode, &Changed);
+    if (!EFI_ERROR(Status) && Cfg.EnrollKEK)
+        Status = EnrollOneVar(BS, RT, DeviceHandle, Cfg.KeyDir, L"KEK.auth", L"KEK",
+            &gSbeGlobalVarGuid, SBE_ATTR_APPEND, gAppQuietMode, &Changed);
+    if (!EFI_ERROR(Status) && Cfg.EnrollPK)
+        Status = EnrollOneVar(BS, RT, DeviceHandle, Cfg.KeyDir, L"PK.auth", L"PK",
+            &gSbeGlobalVarGuid, SBE_ATTR_BASE, gAppQuietMode, &Changed);
+    if (EFI_ERROR(Status) || !Changed || !Cfg.RebootAfter) {
+        if (!gAppQuietMode) UiPrint(L"[SBE] No automatic reboot: status %r, changed=%u.\n", Status, Changed);
         return;
     }
 

@@ -20,6 +20,22 @@
 > **Note:** When using the signed build with Secure Boot enabled, skip the Loader — create your boot entry pointing directly to `UnderVolter.efi`.
 ![UnderVolter Demo](images/UnderVolter.gif)
 
+<details>
+<summary><strong>September 2026 update — changes since the May 2026 release</strong></summary>
+
+- Reworked guarded MSR and MMIO access so only faults at known access instructions are recovered; unrelated firmware exceptions are forwarded to the original handlers.
+- Hardened INI discovery and parsing with same-volume lookup, bounded reads, UTF-8 BOM handling, embedded-NUL rejection, strict booleans and numeric range checks.
+- Made NVRAM patching idempotent and verified: bounds, duplicate/conflicting offsets, variable-size fingerprints, write-back checks, and reboot only after an actual confirmed change.
+- Made Secure Boot SelfEnroll idempotent and repairable: validates enrollment payloads, preserves existing PK, fills missing `db`/`KEK` entries, verifies read-back, and avoids unnecessary resets.
+- Fixed multiprocessor topology and dispatch for interleaved package IDs, disabled logical processors, AP completion, and callback lifetime.
+- Fixed OC mailbox retry/status handling, V/F error propagation, ICC Max clamping, power-limit units and field scaling, and overflow-safe TSC conversion.
+- Added a QEMU/OVMF regression application with 58 passing checks, production-image `LoadImage`/`StartImage` coverage, and a Secure Boot enrollment reboot test.
+- Changed the build layout so final EFI files go directly to `bin\`; temporary `.build\` output is removed after a successful build.
+
+Lunar Lake is detected but voltage programming is intentionally rejected because a supported hardware path has not been confirmed.
+
+</details>
+
 <div align="center">
 
 **Bare-metal UEFI application for Intel CPU power management programming**
@@ -28,7 +44,7 @@
 
 *Supports voltage offset, power limits (PL1/PL2/PL3/PL4/PP0), turbo ratios, V/F curve overrides, and ICC Max configuration*
 
-*Configuration-driven via `UnderVolter.ini` with per-architecture profiles and community-tested safe defaults*
+*Configuration-driven via `UnderVolter.ini` with per-architecture profiles*
 
 *Compatible with OpenCore, EFI Shell, and standard UEFI boot environments*
 
@@ -83,9 +99,9 @@
 
 UnderVolter is a standalone UEFI application (`UnderVolter.efi`) that programs Intel CPU power management parameters from the pre-boot environment, before any operating system or hypervisor loads. It operates entirely within UEFI Boot Services, using `EFI_MP_SERVICES_PROTOCOL` to dispatch MSR writes across all logical processors simultaneously, and `EFI_RUNTIME_SERVICES` for NVRAM access. Upon completion it exits cleanly, returning control to the firmware boot manager or to the next application in the boot chain (e.g. OpenCore, Windows Boot Manager).
 
-The application carries a self-signed Authenticode certificate embedded at build time. At first run on a new machine it can enroll its own root CA directly into UEFI `db`, `KEK`, and `PK` — no external tools, no Linux environment, no MOK manager required. After that single enrollment reboot every subsequent build signed with the same key is accepted by the firmware without further BIOS interaction. Hidden BIOS variables such as CFG Lock and OC Lock can be patched in-place via a verified NVRAM write-back cycle, eliminating the need for GRUB shell workarounds or external flashers.
+The application carries an Authenticode signing chain with its root certificate embedded at build time. On firmware that accepts the writes, SelfEnroll can add the root CA to UEFI `db` and `KEK`, and create `PK` when it is absent. Every write is verified, repeated runs are no-ops when the requested entries are already present, and reboot occurs only after a confirmed change. Hidden BIOS variables such as CFG Lock and OC Lock can be patched in-place through the same verified and idempotent NVRAM workflow.
 
-Internally the code follows conventions typical of embedded and firmware engineering: structured exception handling using UEFI `SetJmp`/`LongJmp` to contain faults during MSR access, explicit ownership semantics in all resource paths, and deterministic execution with no heap allocation after initialisation. Multiprocessor dispatch, physical MMIO mapping, and UEFI variable access are handled through first-class protocol interfaces rather than direct port I/O or inline assembly where the abstraction is available. The processor coverage spans Sandy Bridge (2011) through Arrow Lake (2024) with per-CPUID voltage domain layouts and MSR address tables derived from Intel architecture manuals.
+Guarded assembly access catches `#UD`, `#GP`, and `#PF` only at named MSR/MMIO instructions and forwards unrelated exceptions to the firmware handlers. Multiprocessor dispatch, physical MMIO mapping, and UEFI variable access use UEFI protocol interfaces. Processor profiles span Sandy Bridge through Arrow Lake; Lunar Lake is detected and reported as unsupported before CPU programming.
 
 Future development targets Virtualization-Based Security environments — specifically executing before VTL1 isolation is established, where MSR write permissions are still unrestricted by the hypervisor.
 
@@ -203,10 +219,9 @@ Total runtime memory footprint: **< 100 KB**
 
 UnderVolter includes pre-configured profiles for the following Intel microarchitectures:
 
-| Architecture | Generation | CPUID | Example Models | Safe Offset (P-Core) |
+| Architecture | Generation | CPUID | Example Models | Template P-Core Offset |
 |--------------|------------|-------|----------------|---------------------|
 | **Arrow Lake** | Core Ultra 200S/HX (15th) | `6,197,*` / `6,198,*` | Core Ultra 9 285K | -30 mV (conservative) |
-| **Lunar Lake** | Core Ultra 200V (2nd-gen Core Ultra mobile) | `6,189,*` | Core Ultra 7 268V | -30 mV (experimental — OC Mailbox restricted) |
 | **Meteor Lake** | Core Ultra 1xx H/U (1st-gen Core Ultra mobile) | `6,170,*` | Core Ultra 7 155H | -30 mV (conservative) |
 | **Raptor Lake Refresh** | 14th Gen Desktop / HX Mobile | `6,191,*` / `6,186,4` | i9-14900K, i9-14900HX | -80 mV |
 | **Raptor Lake** | 13th Gen | `6,183,*` / `6,186,2-3` | i9-13900K, i7-13700K | -80 mV |
@@ -232,13 +247,10 @@ UnderVolter includes pre-configured profiles for the following Intel microarchit
 - Conservative defaults: IACORE/ECORE -30 mV, RING -20 mV, GT/Uncore 0 mV
 - Many OEM BIOSes lock undervolting; if locked, these offsets won't apply
 
-**Lunar Lake (Core Ultra 200V, 2nd-gen Core Ultra mobile)**
-- 2-tile architecture: Compute (Lion Cove P-cores, no HT + Skymont E-cores) + Platform Controller (SoC, Xe2 Battlemage GPU, Media, IO)
-- On-package LPDDR5X — no discrete memory controller
-- DLVR voltage regulation throughout (same as Arrow Lake)
-- **Profile included** in UnderVolter (`vcfg_q_lunarlake_client`) — conservative defaults applied
-- **OC Mailbox heavily restricted** on production silicon — VR topology discovery disabled; voltage offsets via MSR 0x150 attempted but may be silently dropped by firmware on locked SKUs
-- VR bit layout for LNL not yet publicly reverse-engineered — to be revisited when community data matures
+**Lunar Lake (Core Ultra 200V, CPUID model 189)**
+- Detected for a clear diagnostic message, but CPU voltage programming is intentionally blocked.
+- No supported OC mailbox or voltage-programming path has been confirmed for production systems.
+- CPU-independent stages such as INI loading, NVRAM setup patching, and certificate enrollment can still run before the unsupported-CPU exit.
 
 **Raptor Lake Refresh (14th Gen Desktop, 14th Gen HX Mobile)**
 - Die-identical to Raptor Lake — same FIVR/OC Mailbox topology, same voltage offset behaviour
@@ -441,16 +453,9 @@ Safe defaults disable every programming operation:
 
 UnderVolter continues running, shows the console output, and exits normally — the system is completely untouched.
 
-### 4. Conservative Profile Defaults
+### 4. Profile Values
 
-All built-in profiles include a 20% safety margin relative to community-reported stable values:
-
-| Architecture | Community Stable | Safe Default (20% margin) |
-|--------------|------------------|---------------------------|
-| Raptor Lake | -100 to -150 mV | -80 mV |
-| Alder Lake | -100 to -150 mV | -80 mV |
-| Comet Lake | -50 mV (5% failure) | -40 mV |
-| Coffee Lake | -150 to -200 mV | -180 mV (user tested) |
+The INI contains starting values for each architecture, including user-tested XPS 15 7590 values in the Coffee Lake profile. Silicon quality, firmware, cooling, and workload all affect stability, so the template values are not a universal safety guarantee. Keep recovery access available and validate offsets on the target machine.
 
 ### 5. Self-Test Mode
 
@@ -512,7 +517,7 @@ UnderVolter prints a warning to the console:
 ```
 WARNING: UnderVolter.ini not found! Using safe fallback defaults.
 ```
-Then continues with **all-disabled safe defaults**: no voltage programming, no power limit changes, no turbo modifications — the system remains completely untouched. UnderVolter still runs to completion and shows the exit delay screen.
+Then exits before timing, topology discovery, and CPU programming. No voltage, power-limit, turbo, ICC Max, or V/F setting is changed.
 
 ### Global Settings
 
@@ -641,6 +646,11 @@ NvramPatchEnabled = 0
 ; Reboot immediately after a confirmed write (recommended).
 ; If = 0, patches are written but you must reboot manually.
 NvramPatchReboot = 1
+
+; Bind the XPS offsets to the expected variable and layout.
+VarName = Setup
+VarGuid = EC87D643-EBA4-4BB5-A1E5-3F3E36B20DA9
+VarSize = 0x17FD
 
 ; Format: Patch_N = 0xOFFSET : 0xVALUE  (hex, up to 16 entries)
 Patch_0 = 0x6ED : 0x00    ; CFG Lock
@@ -824,6 +834,8 @@ To find the correct byte offsets for your BIOS, use **IFRExtractor.exe** include
 
 UnderVolter includes a complete self-enrollment workflow that installs its own root CA certificate into UEFI Secure Boot — directly from the UEFI Shell, with no external tools, no Linux environment, and no MOK manager. Once enrolled, every future `UnderVolter.efi` signed with the same leaf certificate is trusted by firmware automatically.
 
+> **Shared demonstration key:** this repository intentionally includes the PFX and its password so the complete signing and SelfEnroll workflow can be studied and reproduced. The shared signature provides compatibility with the included root certificate; it does not prove who produced a binary, because anyone can use the same key. Generate and enroll your own root/signing pair when publisher authentication is part of your security model.
+
 > **Prerequisites:** Secure Boot enrollment requires UEFI 2.3.1 or later firmware. Sandy Bridge (2nd Gen, 2011) boards that shipped before Secure Boot was standardised may lack `SetupMode` support entirely — check for a BIOS update that adds Secure Boot options before attempting. If the BIOS has no Secure Boot menu at all, SelfEnroll cannot work on that board.
 
 ### How SelfEnroll Works
@@ -921,11 +933,11 @@ Files remaining in `Signer\cert\`:
 
 | File | Description | Security |
 |------|-------------|----------|
-| `undervolter-standard-root.cer` | Root CA public cert (DER) | Public — backup only |
-| `undervolter-standard-signing.cer` | Signing cert public (DER) | Public — backup only |
-| `undervolter-standard-signing.pfx` | Signing cert + **private key** | **Keep secret — never upload to ESP** |
-| `undervolter-standard-signing.pwd` | PFX password (plain text) | **Keep secret — never upload to ESP** |
-| `signing.config.json` | Name configuration | Safe to leave |
+| `undervolter-standard-root.cer` | Root CA public cert (DER) | Public; keep a backup |
+| `undervolter-standard-signing.cer` | Signing cert public (DER) | Public; keep a backup |
+| `undervolter-standard-signing.pfx` | Shared demonstration signing key | Public by design; do not use as a private identity key |
+| `undervolter-standard-signing.pwd` | Password for the shared PFX | Public by design |
+| `signing.config.json` | Name configuration | Public |
 
 > **Note:** `sign.ps1 -Create` is not used for certificate generation. Use the OpenSSL commands above — `sign.ps1` is only called automatically by `build.ps1` for signing the compiled EFI.
 
@@ -1034,7 +1046,7 @@ fs0:\EFI\UnderVolter> UnderVolter.efi
 [SBE]   db:  OK
 [SBE]   KEK: OK
 [SBE]   PK:  OK
-[SBE] SelfEnroll: all keys enrolled. Secure Boot active after reboot.
+[SBE] SelfEnroll: all keys enrolled. Check SecureBoot state after reboot.
 [SBE]             Future UnderVolter.efi releases signed with the leaf cert are trusted.
 [SBE]   DeployedMode: OK — Secure Boot will enforce after reboot.
 [SBE] Boot to BIOS/firmware UI? [Y/N] (5s)
@@ -1087,14 +1099,13 @@ Mode:        User Mode
 | `[SBE] SelfEnroll: Setup Mode confirmed.` | Standard UEFI SetupMode=1 detected |
 | `[SBE] SelfEnroll: SetupMode=0 (Dell Audit/Custom Mode?). Attempting enrollment...` | OEM firmware — enrollment attempted anyway |
 | `[SBE]   db: OK / KEK: OK / PK: OK` | All three UEFI variables written and verified |
-| `[SBE] SelfEnroll: all keys enrolled. Secure Boot active after reboot.` | Successful enrollment — reboot imminent |
+| `[SBE] SelfEnroll: all keys enrolled. Check SecureBoot state after reboot.` | All requested entries verified; reboot follows only if something changed |
 | `[SBE]   DeployedMode: OK` | UEFI 2.5+ Audit→Deployed transition accepted |
 | `[SBE]   DeployedMode: firmware rejected (0x...)` | Firmware refused — switch Deployed Mode manually in BIOS |
 | `[SBE] SelfEnroll: certificate already enrolled — no action needed.` | Idempotent — cert present, no write, no reboot |
 | `[SBE] SelfEnroll: no certificate embedded.` | EFI was not built with `build.ps1` after cert generation; rebuild |
-| `[SBE] SelfEnroll: not in Setup Mode.` | BIOS PK still set — clear Secure Boot keys in BIOS first |
 | `[SBE]   db: FAILED` | Firmware rejected write — verify Setup Mode is active |
-| `[SBE] SelfEnroll: one or more writes failed — NOT rebooting.` | Partial failure — check BIOS Key Management, clear keys, retry |
+| `[SBE] SelfEnroll: db/KEK write failed — NOT rebooting.` | Trust database is incomplete; check BIOS key-management mode and retry |
 
 ### Subsequent Releases — No BIOS Visit Needed
 
@@ -1110,13 +1121,13 @@ The root CA certificate in BIOS is valid for **10 years**. The signing certifica
 
 ### Windows Compatibility After SelfEnroll
 
-UnderVolter's SelfEnroll uses `APPEND_WRITE` mode for `db` and `KEK`, preserving existing entries (including the Microsoft CA that Windows depends on). The `PK` is replaced — this may affect Windows Secure Boot on some configurations.
+UnderVolter's SelfEnroll uses append mode for `db` and `KEK`, preserving existing entries. It creates `PK` only when `PK` is absent and never replaces an existing Platform Key.
 
 | Situation | Solution |
 |-----------|----------|
 | Windows fails to boot after enrollment | BIOS → Restore Factory Keys / Install Default Secure Boot Keys → re-enroll UnderVolter |
-| BIOS allows multiple PK entries | No issue — Microsoft CA is preserved in `db`/`KEK` by `APPEND_WRITE` |
-| Advanced: keep Microsoft CA in PK | Use `.auth` file enrollment (`SecureBootEnroll = 1`) with a combined `PK.auth` containing both Microsoft and UnderVolter certs |
+| Existing PK is present | SelfEnroll preserves it; firmware policy determines whether `db`/`KEK` append writes are accepted |
+| Advanced custom key deployment | Use validated `.auth` files with `SecureBootEnroll = 1` and an explicit `KeyDir` |
 
 ---
 
@@ -1395,7 +1406,7 @@ bcdedit /set {GUID} device partition=V:
 
 ### Requirements
 
-- **Visual Studio 2022** or later with C++ desktop development workload
+- **Visual Studio or Build Tools** with the x64 C++ compiler and assembler
 - **Windows SDK** (included with VS)
 - **PowerShell 5.1** or later (for build scripts)
 
@@ -1411,12 +1422,11 @@ cd C:\Projekty\UnderVolter
 
 #### Build Steps:
 
-1. **Locate MSBuild** — Uses `vswhere.exe` to find Visual Studio installation
-2. **Clean Directories** — Removes `bin\` and `.vs\` cache directories
-3. **Build Release x64** — Compiles `UnderVolter.sln` in Release/x64 configuration
-4. **Copy Output** — Copies `UnderVolter.efi`, `Loader.efi`, and `UnderVolter.ini` to `bin\`
-5. **Set Timestamp** — Sets file dates to `2030-01-01 00:00:00` for reproducible builds
-6. **Clean Build Output** — Removes intermediate files from `x64\Release\`
+1. **Verify dependencies** — Checks the local `lib\` set and required compatibility header
+2. **Locate the toolchain** — Enumerates Visual Studio instances and selects one that actually contains x64 `cl.exe`, `ml64.exe`, and MSBuild
+3. **Build Release x64** — Both projects emit their final EFI files directly into `bin\`
+4. **Sign and verify** — Signs `UnderVolter.efi`; the release workflow rejects a missing or invalid end-to-end signature
+5. **Clean intermediates** — Removes `.build\` and legacy `x64\` output while keeping only final files in `bin\`
 
 ### Output Files
 
@@ -1431,7 +1441,7 @@ bin/
 
 ### Static Build Signature
 
-All files are timestamped with `2030-01-01 00:00:00` for:
+Release files are timestamped with `2030-01-01 00:00:00` for:
 
 - Reproducible builds
 - Deterministic versioning
@@ -1441,32 +1451,33 @@ All files are timestamped with `2030-01-01 00:00:00` for:
 
 ## QEMU Testing
 
-`test-qemu.zip` contains a ready-to-use QEMU/OVMF testing environment — extract and run `run-qemu.ps1` to test UnderVolter without real hardware.
+`run-qemu.ps1` creates an isolated `.qemu-vm\` directory and runs the current build with QEMU/OVMF. It supports interactive display, headless regression runs, persistent or reset NVRAM, Secure Boot firmware, alternate binary/INI paths, and a QMP control port.
 
 ### Requirements
 
 | Component | Version / Notes |
 |-----------|----------------|
-| **QEMU for Windows** | ≥ 9.0 recommended; tested with **10.2.90 (v11.0.0-rc0)**; must include GTK display and `bochs-display` device support — use the official [qemu.org](https://www.qemu.org/download/#windows) Windows build |
-| **OVMF firmware** | `edk2-x86_64-code.fd` — bundled with QEMU at `C:\Program Files\qemu\share\` |
-| **OVMF variables** | `ovmf-vars.fd` — included in `test-qemu.zip`; stores UEFI NVRAM state between runs |
-| **Working directory** | `C:\vm\qemu` — the script copies binaries here and uses this directory as the virtual FAT disk |
+| **QEMU for Windows** | Installation containing `qemu-system-x86_64.exe` and a `share\` firmware directory |
+| **OVMF firmware** | Standard and Secure Boot images are discovered in the QEMU installation |
+| **Working directory** | `.qemu-vm\` by default; override with `-VmDir` |
 
 ### Quick Start
 
 ```powershell
-# 1. Extract test-qemu.zip to C:\vm\qemu
-# 2. Build UnderVolter (or use pre-built binaries from UnderVolter.zip)
-# 3. Run:
+# Build and start an interactive Coffee Lake VM.
+.\build.ps1
 .\run-qemu.ps1
+
+# Run the isolated firmware regression application.
+.\tests\run-regression.ps1
 ```
 
 The script automatically:
-- Copies the latest `UnderVolter.efi` and `UnderVolter.ini` from `bin\` into `C:\vm\qemu\` if they have changed
-- Creates `startup.nsh` if missing — EFI Shell auto-runs `UnderVolter.efi` on boot
-- Mounts `C:\vm\qemu\` as a virtual FAT drive (`fat:rw:` via VirtIO) — the EFI Shell sees it as `FS0:`
+- Copies the selected EFI and `UnderVolter.ini` into the VM's virtual ESP
+- Creates `startup.nsh` for interactive UEFI Shell runs or `BOOTX64.EFI` for headless runs
+- Mounts the ESP as a writable FAT disk
 - Uses `bochs-display` at 1920×1080 with OVMF resolution hints via `fw_cfg` (higher quality than standard VGA)
-- Logs QEMU errors to `C:\vm\qemu\qemu-error.log`
+- Writes QEMU errors and UEFI serial output under `.qemu-vm\logs\`
 
 ### Simulated CPU
 
@@ -1476,20 +1487,17 @@ The test environment emulates an **Intel i7-9750H (Coffee Lake)** — the same C
 -cpu "qemu64,family=6,model=158,stepping=10"
 ```
 
-To test a different architecture, change `model` and `stepping` to match any entry from the [Supported Processors](#supported-processors) table.
+Use `-Cpu AlderLake`, `-Cpu RaptorLake`, or another supported preset to change the emulated CPUID.
 
 ### Virtual Disk Layout
 
-`C:\vm\qemu\` acts as the root of the virtual FAT volume (`FS0:` in EFI Shell):
+`.qemu-vm\esp\` acts as the root of the virtual FAT volume:
 
 ```
-C:\vm\qemu\                  ← FS0:\ in EFI Shell
-├── UnderVolter.efi          ← main application (auto-copied from bin\)
-├── Loader.efi               ← optional loader
-├── UnderVolter.ini          ← configuration (auto-copied from bin\)
-├── startup.nsh              ← auto-run script (created by run-qemu.ps1)
-├── ovmf-vars.fd             ← UEFI NVRAM variables (persistent across runs)
-└── qemu-error.log           ← QEMU stderr output
+.qemu-vm\
+├── esp\                     ← virtual FAT volume
+├── firmware\                ← local OVMF CODE/VARS copies
+└── logs\                    ← serial and QEMU diagnostics
 ```
 
 ### startup.nsh (Auto-Run Script)
@@ -1543,8 +1551,8 @@ UnderVolter/
 │   └── cert/
 │       ├── undervolter-standard-root.cer      # Root CA public cert (DER)
 │       ├── undervolter-standard-signing.cer   # Signing cert public (DER)
-│       ├── undervolter-standard-signing.pfx   # PRIVATE KEY — never put on ESP
-│       ├── undervolter-standard-signing.pwd   # PFX password — never put on ESP
+│       ├── undervolter-standard-signing.pfx   # Public demonstration signing key
+│       ├── undervolter-standard-signing.pwd   # Password for the shared PFX
 │       └── signing.config.json                # Name config
 ├── bin/                     # Build output
 ├── build.ps1                # Build script (embed-cert → compile → sign → clean)
@@ -1709,7 +1717,7 @@ Copyright (c) 2026 Marek Wesołowski (WESMAR)
 
 ### Disclaimer
 
-UnderVolter writes directly to CPU Model-Specific Registers and MMIO power management interfaces. Incorrect voltage or power limit configuration can cause system instability or data loss. The application includes a 2-second ESC abort window at startup and ships with conservative safe defaults, but the correct values are platform-specific and must be validated by the user. Test with small offsets, maintain recovery media, and understand the configuration before deploying to a production machine. Use at your own risk.
+UnderVolter writes directly to CPU Model-Specific Registers and MMIO power management interfaces. Incorrect voltage or power limit configuration can cause system instability or data loss. The application includes a 2-second ESC abort window, but all profile values are platform-specific and must be validated by the user. Test with small offsets, maintain recovery access, and understand the configuration before deployment. Use at your own risk.
 
 All trademarks, logos, and brand names are the property of their respective owners. Intel, Core, and related marks are trademarks of Intel Corporation.
 

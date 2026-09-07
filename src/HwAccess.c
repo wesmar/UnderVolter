@@ -134,18 +134,26 @@ VOID EFIAPI InitializeMMIO(VOID)
   gPCIeBaseAddr = GetPciExpressBaseAddress();
 
   //
-  // Just in case
-  // 
-  if (!(gPCIeBaseAddr & 0x1))
+  // Bit 0 of PCIEXBAR is PCIEXBAREN.  With ECAM disabled the remaining bits
+  // are meaningless, and probing MMIO at a stale base is not worth the risk.
+
+  if ((gPCIeBaseAddr == 0) || !(gPCIeBaseAddr & 0x1))
   {
     gPCIeBaseAddr = 0;
     gMCHBAR = 0;
+    return;
   }    
 
   //
-  // Locate MCHBAR
+  // Locate MCHBAR at D0:F0 offset 0x48.
+  // Bit 0 is the enable bit; bits 31:1 is the base address.
 
-  gMCHBAR = pm_mmio_read32((gPCIeBaseAddr & 0xFC000000) + 0x48) & 0xfffffffe;
+  const UINT32 mchbarRaw = pm_mmio_read32((gPCIeBaseAddr & 0xFC000000) + 0x48);
+  if (mchbarRaw & 0x1) {
+    gMCHBAR = mchbarRaw & 0xfffffffe;
+  } else {
+    gMCHBAR = 0;
+  }
 }
 
 // ─── MSR and MMIO wrappers: each calls the Safe* ASM stub, logs via MiniTrace,

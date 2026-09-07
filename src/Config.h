@@ -33,3 +33,6 @@ VOID ReleaseAppSettings(VOID);
 // Returns a read-only pointer to the loaded INI buffer, valid between
 // LoadAppSettings() and ReleaseAppSettings(). NULL when no INI was found.
 CONST CHAR8* GetIniDataPtr(VOID);
+
+// Filesystem containing the successfully loaded configuration.
+EFI_HANDLE GetIniDeviceHandle(VOID);

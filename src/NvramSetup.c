@@ -16,6 +16,7 @@
 #include <Uefi.h>
 #include <Library/UefiLib.h>
 #include <Library/MemoryAllocationLib.h>
+#include <Library/BaseMemoryLib.h>
 
 #include "NvramSetup.h"
 #include "Config.h"
@@ -49,6 +50,9 @@ static EFI_GUID gNvramGlobalVarGuid = {
 // honour the chain regardless of BDS quirks.  Best-effort: any failure is
 // silent — BootNext is belt-and-suspenders, not load-bearing.
 static VOID SetBootNextToCurrent(IN EFI_RUNTIME_SERVICES* RT) {
+  UINT16 next = 0;
+  UINTN nextSize = sizeof(next);
+  if (RT->GetVariable(L"BootNext", &gNvramGlobalVarGuid, NULL, &nextSize, &next) != EFI_NOT_FOUND) return;
   UINT16 cur  = 0;
   UINTN  size = sizeof(cur);
   EFI_STATUS s = RT->GetVariable(L"BootCurrent", &gNvramGlobalVarGuid,
@@ -73,7 +77,7 @@ static VOID SetBootNextToCurrent(IN EFI_RUNTIME_SERVICES* RT) {
 // GetVariable().
 #define NVRAM_MAX_OFFSET   0xFFFFFF
 
-// ─── Minimal hex parser (no libc in UEFI pre-boot) ───────────────────────────
+// ─── Minimal hex and string parsers (no libc in UEFI pre-boot) ───────────────
 
 // Parse an unsigned hex integer from ASCII with optional "0x"/"0X" prefix.
 // Stops at the first non-hex character.  Returns 0 and sets *OutValid=FALSE
@@ -99,22 +103,113 @@ static UINT32 ParseHex(CONST CHAR8* s, BOOLEAN* OutValid) {
   return v;
 }
 
+// Parse a standard GUID string "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+static BOOLEAN ParseGuid(CONST CHAR8* s, EFI_GUID* Guid) {
+  while (*s == ' ' || *s == '\t' || *s == '=') s++;
+  if (IniStrLen8(s) < 36) return FALSE;
+  UINT32 d1 = 0;
+  for (int i = 0; i < 8; i++) {
+    CHAR8 c = *s++;
+    UINT32 nib;
+    if      (c >= '0' && c <= '9') nib = (UINT32)(c - '0');
+    else if (c >= 'a' && c <= 'f') nib = (UINT32)(c - 'a' + 10);
+    else if (c >= 'A' && c <= 'F') nib = (UINT32)(c - 'A' + 10);
+    else return FALSE;
+    d1 = (d1 << 4) | nib;
+  }
+  if (*s++ != '-') return FALSE;
+  UINT16 d2 = 0;
+  for (int i = 0; i < 4; i++) {
+    CHAR8 c = *s++;
+    UINT32 nib;
+    if      (c >= '0' && c <= '9') nib = (UINT32)(c - '0');
+    else if (c >= 'a' && c <= 'f') nib = (UINT32)(c - 'a' + 10);
+    else if (c >= 'A' && c <= 'F') nib = (UINT32)(c - 'A' + 10);
+    else return FALSE;
+    d2 = (UINT16)((d2 << 4) | nib);
+  }
+  if (*s++ != '-') return FALSE;
+  UINT16 d3 = 0;
+  for (int i = 0; i < 4; i++) {
+    CHAR8 c = *s++;
+    UINT32 nib;
+    if      (c >= '0' && c <= '9') nib = (UINT32)(c - '0');
+    else if (c >= 'a' && c <= 'f') nib = (UINT32)(c - 'a' + 10);
+    else if (c >= 'A' && c <= 'F') nib = (UINT32)(c - 'A' + 10);
+    else return FALSE;
+    d3 = (UINT16)((d3 << 4) | nib);
+  }
+  if (*s++ != '-') return FALSE;
+  UINT8 d4[8];
+  for (int i = 0; i < 2; i++) {
+    CHAR8 c1 = *s++, c2 = *s++;
+    UINT8 n1, n2;
+    if      (c1 >= '0' && c1 <= '9') n1 = (UINT8)(c1 - '0');
+    else if (c1 >= 'a' && c1 <= 'f') n1 = (UINT8)(c1 - 'a' + 10);
+    else if (c1 >= 'A' && c1 <= 'F') n1 = (UINT8)(c1 - 'A' + 10);
+    else return FALSE;
+    if      (c2 >= '0' && c2 <= '9') n2 = (UINT8)(c2 - '0');
+    else if (c2 >= 'a' && c2 <= 'f') n2 = (UINT8)(c2 - 'a' + 10);
+    else if (c2 >= 'A' && c2 <= 'F') n2 = (UINT8)(c2 - 'A' + 10);
+    else return FALSE;
+    d4[i] = (UINT8)((n1 << 4) | n2);
+  }
+  if (*s++ != '-') return FALSE;
+  for (int i = 2; i < 8; i++) {
+    CHAR8 c1 = *s++, c2 = *s++;
+    UINT8 n1, n2;
+    if      (c1 >= '0' && c1 <= '9') n1 = (UINT8)(c1 - '0');
+    else if (c1 >= 'a' && c1 <= 'f') n1 = (UINT8)(c1 - 'a' + 10);
+    else if (c1 >= 'A' && c1 <= 'F') n1 = (UINT8)(c1 - 'A' + 10);
+    else return FALSE;
+    if      (c2 >= '0' && c2 <= '9') n2 = (UINT8)(c2 - '0');
+    else if (c2 >= 'a' && c2 <= 'f') n2 = (UINT8)(c2 - 'a' + 10);
+    else if (c2 >= 'A' && c2 <= 'F') n2 = (UINT8)(c2 - 'A' + 10);
+    else return FALSE;
+    d4[i] = (UINT8)((n1 << 4) | n2);
+  }
+  Guid->Data1 = d1;
+  Guid->Data2 = d2;
+  Guid->Data3 = d3;
+  CopyMem(Guid->Data4, d4, 8);
+  return TRUE;
+}
+
+// Parse variable name string into a CHAR16 buffer
+static VOID ParseVarName(CONST CHAR8* s, CHAR16* OutName, UINTN MaxLen) {
+  while (*s == ' ' || *s == '\t' || *s == '=') s++;
+  UINTN i = 0;
+  while (*s && *s != ' ' && *s != '\t' && *s != '\r' && *s != '\n' && *s != ';' && *s != '#' && i + 1 < MaxLen) {
+    OutName[i++] = (CHAR16)(*s++);
+  }
+  OutName[i] = 0;
+}
+
 // ─── [SetupVar] INI section parser ───────────────────────────────────────────
 
 // Scan IniData for the [SetupVar] section and extract:
 //   NvramPatchEnabled → *OutEnabled  (default FALSE if key absent)
 //   NvramPatchReboot  → *OutReboot   (default TRUE  if key absent)
+//   VarName/VariableName → OutVarName (default L"Setup" if absent)
+//   VarGuid/VariableGuid → OutGuid    (default gSetupVarGuid if absent)
+//   VarSize/VariableSize → *OutExpectedSize (default 0 = skip size check)
 //   Patch_N = 0xOFFSET : 0xVALUE entries (N arbitrary, up to NVRAM_MAX_PATCHES)
 // Returns the number of valid Patch_N entries found.
 static UINTN ParseSetupVarSection(
   CONST CHAR8* IniData,
   BOOLEAN*     OutEnabled,
   BOOLEAN*     OutReboot,
+  CHAR16       OutVarName[64],
+  EFI_GUID*    OutGuid,
+  UINT32*      OutExpectedSize,
   UINT32       OutOffsets[NVRAM_MAX_PATCHES],
   UINT8        OutValues [NVRAM_MAX_PATCHES]
 ) {
   *OutEnabled = FALSE;
   *OutReboot  = TRUE;
+  *OutExpectedSize = 0;
+  StrCpyS(OutVarName, 64, L"Setup");
+  CopyMem(OutGuid, &gSetupVarGuid, sizeof(EFI_GUID));
 
   if (!IniData) return 0;
 
@@ -143,6 +238,30 @@ static UINTN ParseSetupVarSection(
 
       } else if (IniMatchCI(p, "NvramPatchReboot")) {
         *OutReboot = IniReadBool(p + IniStrLen8("NvramPatchReboot"), TRUE);
+
+      } else if (IniMatchCI(p, "VariableName") || IniMatchCI(p, "VarName")) {
+        CONST CHAR8* eq = p;
+        while (*eq && *eq != '=' && *eq != '\n') eq++;
+        if (*eq == '=') ParseVarName(eq + 1, OutVarName, 64);
+
+      } else if (IniMatchCI(p, "VariableGuid") || IniMatchCI(p, "VarGuid")) {
+        CONST CHAR8* eq = p;
+        while (*eq && *eq != '=' && *eq != '\n') eq++;
+        if (*eq == '=') {
+          EFI_GUID parsedGuid;
+          if (ParseGuid(eq + 1, &parsedGuid)) {
+            CopyMem(OutGuid, &parsedGuid, sizeof(EFI_GUID));
+          }
+        }
+
+      } else if (IniMatchCI(p, "VariableSize") || IniMatchCI(p, "VarSize")) {
+        CONST CHAR8* eq = p;
+        while (*eq && *eq != '=' && *eq != '\n') eq++;
+        if (*eq == '=') {
+          BOOLEAN szValid = FALSE;
+          UINT32 sz = ParseHex(eq + 1, &szValid);
+          if (szValid) *OutExpectedSize = sz;
+        }
 
       } else if (IniMatchCI(p, "Patch_") && count < NVRAM_MAX_PATCHES) {
         // Format: Patch_N = 0xOFFSET : 0xVALUE
@@ -177,28 +296,38 @@ static UINTN ParseSetupVarSection(
 
 VOID ApplyNvramSetupPatches(IN EFI_SYSTEM_TABLE* SystemTable)
 {
-  BOOLEAN enabled  = FALSE;
-  BOOLEAN doReboot = TRUE;
-  UINT32  offsets[NVRAM_MAX_PATCHES];
-  UINT8   values [NVRAM_MAX_PATCHES];
+  BOOLEAN  enabled  = FALSE;
+  BOOLEAN  doReboot = TRUE;
+  CHAR16   varName[64];
+  EFI_GUID varGuid;
+  UINT32   expectedSize = 0;
+  UINT32   offsets[NVRAM_MAX_PATCHES];
+  UINT8    values [NVRAM_MAX_PATCHES];
 
   UINTN patchCount = ParseSetupVarSection(
-    GetIniDataPtr(), &enabled, &doReboot, offsets, values);
+    GetIniDataPtr(), &enabled, &doReboot, varName, &varGuid, &expectedSize, offsets, values);
 
   if (!enabled || patchCount == 0) return;
 
   EFI_RUNTIME_SERVICES* RT = SystemTable->RuntimeServices;
 
-  // ── Query the size of the Setup variable ────────────────────────────────
+  // ── Query the size of the target variable ────────────────────────────────
   // First call with DataSize=0 returns EFI_BUFFER_TOO_SMALL and fills DataSize.
   UINTN      dataSize = 0;
   UINT32     attrs    = 0;
   EFI_STATUS status   = RT->GetVariable(
-    L"Setup", &gSetupVarGuid, &attrs, &dataSize, NULL);
+    varName, &varGuid, &attrs, &dataSize, NULL);
 
   if (status != EFI_BUFFER_TOO_SMALL || dataSize == 0) {
     if (!gAppQuietMode)
-      UiPrint(L"[NVRAM] Cannot query Setup variable size (0x%x)\n", status);
+      UiPrint(L"[NVRAM] Cannot query '%s' variable size (0x%x)\n", varName, status);
+    return;
+  }
+
+  if (expectedSize > 0 && dataSize != (UINTN)expectedSize) {
+    if (!gAppQuietMode)
+      UiPrint(L"[NVRAM] '%s' size mismatch: expected 0x%X, got 0x%X — skipping for safety.\n",
+              varName, expectedSize, (UINT32)dataSize);
     return;
   }
 
@@ -210,12 +339,19 @@ VOID ApplyNvramSetupPatches(IN EFI_SYSTEM_TABLE* SystemTable)
     return;
   }
 
-  status = RT->GetVariable(L"Setup", &gSetupVarGuid, &attrs, &dataSize, data);
+  status = RT->GetVariable(varName, &varGuid, &attrs, &dataSize, data);
   if (EFI_ERROR(status)) {
     if (!gAppQuietMode)
-      UiPrint(L"[NVRAM] GetVariable failed (0x%x)\n", status);
+      UiPrint(L"[NVRAM] GetVariable('%s') failed (0x%x)\n", varName, status);
     FreePool(data);
     return;
+  }
+
+  for (UINTN i = 0; i < patchCount; i++) {
+    if (offsets[i] >= dataSize) { FreePool(data); return; }
+    for (UINTN j = 0; j < i; j++) {
+      if (offsets[i] == offsets[j] && values[i] != values[j]) { FreePool(data); return; }
+    }
   }
 
   // ── Compare current values against desired — skip bytes already correct ──
@@ -249,23 +385,27 @@ VOID ApplyNvramSetupPatches(IN EFI_SYSTEM_TABLE* SystemTable)
   if (applied == 0) {
     // All bytes already match — nothing to write, no reboot needed.
     if (!gAppQuietMode)
-      UiPrint(L"[NVRAM] All offsets already set correctly — no action needed.\n");
+      UiPrint(L"[NVRAM] All offsets in '%s' already set correctly — no action needed.\n", varName);
     FreePool(data);
     return;
   }
 
   if (!gAppQuietMode)
-    UiPrint(L"[NVRAM] Setup variable: %u bytes, %u byte(s) changed:\n",
-            (UINT32)dataSize, (UINT32)applied);
+    UiPrint(L"[NVRAM] '%s' variable: %u bytes, %u byte(s) changed\n",
+            varName, (UINT32)dataSize, (UINT32)applied);
 
   // ── Write the patched variable back ─────────────────────────────────────
   // Use the same attributes read from GetVariable to preserve NV/BS/RT flags.
-  status = RT->SetVariable(L"Setup", &gSetupVarGuid, attrs, dataSize, data);
+  status = RT->SetVariable(varName, &varGuid, attrs, dataSize, data);
   FreePool(data);
 
   if (EFI_ERROR(status)) {
-    if (!gAppQuietMode)
-      UiPrint(L"[NVRAM] SetVariable failed (0x%x) — patches NOT written.\n", status);
+    if (!gAppQuietMode) {
+      if (status == EFI_WRITE_PROTECTED)
+        UiPrint(L"[NVRAM] SetVariable('%s') failed (0x%x / Write Protected) — firmware/SMM locks this variable.\n", varName, status);
+      else
+        UiPrint(L"[NVRAM] SetVariable('%s') failed (0x%x) — patches NOT written.\n", varName, status);
+    }
     return;
   }
 
@@ -276,18 +416,18 @@ VOID ApplyNvramSetupPatches(IN EFI_SYSTEM_TABLE* SystemTable)
   // Verification is fail-closed: any failure to read back (alloc error, API
   // error, offset out of range) is treated as unverified — no reboot.
   {
-    UINTN  verifySize  = 0;
-    UINT32 verifyAttrs = 0;
-    BOOLEAN verified   = FALSE;
+    UINTN   verifySize  = 0;
+    UINT32  verifyAttrs = 0;
+    BOOLEAN verified    = FALSE;
 
     status = RT->GetVariable(
-      L"Setup", &gSetupVarGuid, &verifyAttrs, &verifySize, NULL);
+      varName, &varGuid, &verifyAttrs, &verifySize, NULL);
 
     if (status == EFI_BUFFER_TOO_SMALL && verifySize > 0) {
       UINT8* verify = AllocatePool(verifySize);
       if (verify) {
         status = RT->GetVariable(
-          L"Setup", &gSetupVarGuid, &verifyAttrs, &verifySize, verify);
+          varName, &varGuid, &verifyAttrs, &verifySize, verify);
         if (!EFI_ERROR(status)) {
           UINTN mismatch = 0;
           for (UINTN i = 0; i < patchCount; i++) {
@@ -335,7 +475,7 @@ VOID ApplyNvramSetupPatches(IN EFI_SYSTEM_TABLE* SystemTable)
     return;
   }
 
-  if (!gAppQuietMode) {
+  if (!gAppQuietMode && SystemTable->ConIn) {
     // 3-second cancellable countdown; any key aborts the reboot
     for (UINT32 sec = 3; sec > 0; sec--) {
       UiPrint(L"\r[NVRAM] Rebooting in %u s... (any key to cancel)  ", sec);
