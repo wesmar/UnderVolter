@@ -4,7 +4,10 @@
 //            (e.g. \EFI\OC\Drivers) → recursive scan → all ESP handles.
 //            After UnderVolter returns, chainloads the next entry in BootOrder
 //            (respecting BootNext and BootCurrent), skipping itself and known
-//            loader names to prevent infinite loops.
+//            loader names to prevent infinite loops.  When no boot option can
+//            be started it falls back to the Windows Boot Manager and, failing
+//            that, returns success so the firmware moves on without showing a
+//            boot-failure dialog.
 #include <Uefi.h>
 #include <Library/UefiLib.h>
 #include <Library/UefiApplicationEntryPoint.h>
@@ -22,6 +25,7 @@
 #include <Protocol/SimpleFileSystem.h>
 
 #define UNDERVOLTER_FILENAME   L"UnderVolter.efi"
+#define WINDOWS_BOOTMGR_PATH   L"\\EFI\\Microsoft\\Boot\\bootmgfw.efi"
 #define BOOT_VAR_NAME_LEN      9
 #define LOAD_OPTION_ACTIVE     0x00000001
 
@@ -484,6 +488,13 @@ StrEndsWith(
 
 // Return TRUE if BootPath points back at this loader (Loader.efi, BOOTX64.EFI,
 // or any path matching our own device+file path).  Prevents chainload loops.
+//
+// A boot option is allowed to name the partition alone, with no file path node;
+// firmware then loads the removable-media fallback \EFI\Boot\BOOTX64.efi from
+// it.  When this loader was installed under that name, such an entry points
+// straight back at us, so a missing file node on our own device counts as a
+// self-reference.  Testing the device prefix first also stops a \Loader.efi or
+// \BOOTX64.EFI sitting on an unrelated disk from being skipped.
 STATIC
 BOOLEAN
 IsForbiddenTarget(
@@ -496,29 +507,36 @@ IsForbiddenTarget(
     return FALSE;
   }
 
-  CONST CHAR16* BootFilePath = GetFilePathFromDevicePath(BootPath);
-  if (BootFilePath == NULL) {
+  // Only boot options living on our own device can loop back to us.
+  UINTN SelfSize = GetDevicePathSize(SelfDevicePath);
+  UINTN PrefixSize = (SelfSize > END_DEVICE_PATH_LENGTH) ? (SelfSize - END_DEVICE_PATH_LENGTH) : 0;
+
+  if (PrefixSize == 0 || GetDevicePathSize(BootPath) < PrefixSize) {
     return FALSE;
   }
 
-  // 1. Exact match (as before)
-  BOOLEAN IsMatch = (SelfFilePath != NULL && PathCmpInsensitive(SelfFilePath, BootFilePath) == 0);
-
-  // 2. Known loader names on the same device
-  if (!IsMatch) {
-    IsMatch = StrEndsWith(BootFilePath, L"\\Loader.efi") || 
-              StrEndsWith(BootFilePath, L"\\BOOTX64.EFI");
+  if (CompareMem(BootPath, SelfDevicePath, PrefixSize) != 0) {
+    return FALSE;
   }
 
-  if (IsMatch) {
-    UINTN SelfSize = GetDevicePathSize(SelfDevicePath);
-    UINTN PrefixSize = (SelfSize > END_DEVICE_PATH_LENGTH) ? (SelfSize - END_DEVICE_PATH_LENGTH) : 0;
-    if (CompareMem(BootPath, SelfDevicePath, PrefixSize) == 0) {
-      return TRUE;
-    }
+  CONST CHAR16* BootFilePath = GetFilePathFromDevicePath(BootPath);
+
+  // Partition-only entry: firmware resolves it to \EFI\Boot\BOOTX64.efi on this
+  // device.  That is this image only when we were started under that name, so
+  // do not skip such an entry on installs where the loader lives elsewhere and
+  // the fallback belongs to somebody else.  An unknown own path is treated as a
+  // self-reference: a needless skip still leaves the rest of BootOrder and the
+  // Windows Boot Manager fallback, whereas a wrong guess chainloads us again.
+  if (BootFilePath == NULL) {
+    return (SelfFilePath == NULL) || StrEndsWith(SelfFilePath, L"\\BOOTX64.EFI");
   }
 
-  return FALSE;
+  if (SelfFilePath != NULL && PathCmpInsensitive(SelfFilePath, BootFilePath) == 0) {
+    return TRUE;
+  }
+
+  return StrEndsWith(BootFilePath, L"\\Loader.efi") ||
+         StrEndsWith(BootFilePath, L"\\BOOTX64.EFI");
 }
 
 // Build the UEFI variable name for a boot option: "Boot" + 4 hex digits.
@@ -716,6 +734,46 @@ StartDefaultBoot(
   return LastStatus;
 }
 
+// Last resort when no BootOrder entry could be started: look for the Windows
+// Boot Manager on every EFI System Partition other than our own and start it.
+// Without this the loader hands an error back to the firmware, which reports a
+// boot failure before falling through to the next BootOrder entry.
+STATIC
+EFI_STATUS
+StartFallbackBootloader(
+  IN EFI_HANDLE ParentImage,
+  IN EFI_HANDLE SelfDevice
+  )
+{
+  UINTN HandleCount = 0;
+  EFI_HANDLE* Handles = NULL;
+  EFI_STATUS Status = gBS->LocateHandleBuffer(
+    ByProtocol, &gEfiSimpleFileSystemProtocolGuid, NULL, &HandleCount, &Handles);
+  if (EFI_ERROR(Status)) return Status;
+
+  Status = EFI_NOT_FOUND;
+
+  for (UINTN h = 0; h < HandleCount; h++) {
+    if (Handles[h] == SelfDevice) continue;
+    if (!IsEfiSystemPartition(Handles[h])) continue;
+
+    EFI_DEVICE_PATH* BootPath = FileDevicePath(Handles[h], WINDOWS_BOOTMGR_PATH);
+    if (BootPath == NULL) continue;
+
+    EFI_HANDLE BootImage = NULL;
+    EFI_STATUS LoadStatus = gBS->LoadImage(FALSE, ParentImage, BootPath, NULL, 0, &BootImage);
+    FreePool(BootPath);
+
+    if (EFI_ERROR(LoadStatus)) continue;      // not present on this partition
+
+    Status = gBS->StartImage(BootImage, NULL, NULL);
+    if (!EFI_ERROR(Status)) break;
+  }
+
+  if (Handles) FreePool(Handles);
+  return Status;
+}
+
 // Locate UnderVolter.efi using the four-step search strategy described in the
 // file header, build a full device path, and load+start it.
 STATIC
@@ -766,8 +824,10 @@ StartUnderVolter(
 }
 
 // EFI application entry point.  Disables the watchdog, runs StartUnderVolter,
-// then chainloads via StartDefaultBoot.  If nothing can be booted, exits with
-// the last status code (firmware will try the next BootOrder entry on its own).
+// then chainloads via StartDefaultBoot, falling back to the Windows Boot
+// Manager.  Always returns EFI_SUCCESS: UnderVolter has already done its work
+// by then, and handing an error back to the firmware only produces a boot
+// failure dialog before it moves to the next BootOrder entry anyway.
 EFI_STATUS
 EFIAPI
 UefiMain(
@@ -780,19 +840,24 @@ UefiMain(
   // Try to start UnderVolter
   StartUnderVolter(ImageHandle);
 
-  // Get device path + file path to avoid loops in StartDefaultBoot
+  // Get device handle, device path and file path to avoid loops in StartDefaultBoot
   EFI_DEVICE_PATH_PROTOCOL* SelfDevicePath = NULL;
   CONST CHAR16* SelfFilePath = NULL;
+  EFI_HANDLE SelfDevice = NULL;
   EFI_LOADED_IMAGE_PROTOCOL* LoadedImage = NULL;
   if (!EFI_ERROR(gBS->HandleProtocol(ImageHandle, &gEfiLoadedImageProtocolGuid, (VOID**)&LoadedImage))) {
+    SelfDevice = LoadedImage->DeviceHandle;
     gBS->HandleProtocol(LoadedImage->DeviceHandle, &gEfiDevicePathProtocolGuid, (VOID**)&SelfDevicePath);
     SelfFilePath = GetFilePathFromDevicePath(LoadedImage->FilePath);
   }
 
   // Chainload next boot option
   EFI_STATUS Status = StartDefaultBoot(ImageHandle, SelfDevicePath, SelfFilePath);
-  
-  // If we reach here, nothing else could be booted
-  gBS->Exit(ImageHandle, Status, 0, NULL);
+
+  // Nothing in BootOrder could be started -- try the Windows Boot Manager.
+  if (EFI_ERROR(Status)) {
+    StartFallbackBootloader(ImageHandle, SelfDevice);
+  }
+
   return EFI_SUCCESS;
 }
